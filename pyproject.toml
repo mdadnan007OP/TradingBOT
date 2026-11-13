@@ -1,0 +1,22 @@
+[build-system]
+requires = ["setuptools>=68.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "forex-trading-bot"
+version = "0.1.0"
+description = "Phase 1 foundation for a modular automated Forex trading bot (MT5/PuPrime intended)."
+readme = "README.md"
+requires-python = ">=3.10"
+authors = [{ name = "Adnan" }]
+license = { text = "MIT" }
+keywords = ["forex", "trading", "bot", "mt5", "quantitative"]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.0",
+]
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["src*"]
