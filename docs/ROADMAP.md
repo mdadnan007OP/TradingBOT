@@ -1,7 +1,8 @@
 # Development Roadmap — Forex Trading Bot
 
-Phase 1 (complete): foundation. Subsequent phases build toward a production
-ready MT5/PuPrime bot. Dates are targets only.
+Phase 1 (complete): foundation. Phase 2 (complete): Market Data Engine.
+Subsequent phases build toward a production-ready MT5/PuPrime bot.
+Dates are targets only.
 
 ## Phase 1 — Foundation (DONE)
 
@@ -16,30 +17,46 @@ ready MT5/PuPrime bot. Dates are targets only.
 - Unit tests
 - Documentation (README, architecture, roadmap, risk & safety)
 
-## Phase 2 — MT5 Broker Adapter & Market Data
+## Phase 2 — Market Data Engine (DONE)
+
+- Universal instrument registry with multi-asset classes (Forex, metals, energy, indices, equities, crypto, other)
+- Configurable instrument specifications (broker symbol mapping, price precision, tick/pip size, contract size, volume type, supported timeframes, market session)
+- Provider interface: `MarketDataProvider` ABC
+- Mock market data provider (simulated OHLC, seed-based, reproducible, clearly labeled `is_simulated=True`)
+- Historical CSV provider (local file loading, column validation, optional volumes/spread)
+- Data validation engine (session-aware: distinguishes expected market closures from unexpected gaps)
+- Market session calendars (Forex weekend, crypto 24/7, equity daily hours, configurable sessions)
+- Data processing engine (sort, deduplicate, filter by symbol/timeframe/date-range, missing interval detection)
+- Candle quality metadata (completion status, timestamp convention, data source classification, bid/ask prices)
+- Service layer orchestrating providers, validator, processor, instrument registry, session calendar
+- W1 and MN1 timeframes added
+- Comprehensive unit tests (68 Phase 2 tests)
+- Demonstration script (`src/market_data/demo.py`)
+
+## Phase 3 — MT5 Broker Adapter
 
 - Implement `Mt5BrokerAdapter` (MetaTrader 5) behind `BrokerAdapter`.
 - Add connection, disconnection, account info, instruments, ticks, candles.
-- Implement `MarketDataEngine` (collect/validate price & candle data).
 - Add reconnection logic and fail-safe for connection failure.
 - Verify broker specifications (symbol availability, lot sizes, point, spreads)
   with PuPrime on demo before assuming anything.
 - Add config flags: `BROKER=mock|mt5`, `MT5_PATH`, `MT5_SERVER`, `MT5_LOGIN`.
+- Live trading remains locked.
 
-## Phase 3 — Technical Indicator Engine
+## Phase 4 — Technical Indicator Engine
 
 - Implement EMA, SMA, RSI, MACD, Bollinger Bands, ATR, ADX, Stochastic.
 - `IndicatorEngine.compute(name, symbol, candles, **params)` contract.
 - Unit tests per indicator against known values.
 
-## Phase 4 — Strategy Engine
+## Phase 5 — Strategy Engine
 
 - `Strategy` ABC (`on_tick`, `on_candle`, `enabled`).
 - `StrategyEngine` (register/enable/disable/dispatch).
 - Starter strategies: EMA crossover, RSI mean-reversion, breakout (skeletons,
   clearly marked non-operational until backtested).
 
-## Phase 5 — Risk Management Engine
+## Phase 6 — Risk Management Engine
 
 - `RiskManager` ABC: `validate`, `compute_position_size`,
   `daily_loss_limit_reached`, `max_positions_reached`.
@@ -47,7 +64,7 @@ ready MT5/PuPrime bot. Dates are targets only.
 - Daily loss limit, max concurrent positions, max exposure per symbol.
 - Centralized risk interface used by `TradeExecutionEngine`.
 
-## Phase 6 — News & Economic Calendar Engine
+## Phase 7 — News & Economic Calendar Engine
 
 - `NewsEngine` ABC: upcoming events, `is_trading_allowed`,
   `minutes_to_next_high_impact_event`.
@@ -56,24 +73,24 @@ ready MT5/PuPrime bot. Dates are targets only.
 - Configurable trading restrictions around high-impact events (CPI, NFP, rate
   decisions).
 
-## Phase 7 — Backtesting Engine
+## Phase 8 — Backtesting Engine
 
 - `BacktestingEngine.run(symbol, candles)` evaluating strategies on history.
 - Performance metrics: win rate, profit factor, drawdown, expectancy.
 - No profitability guarantees; backtest results are not predictive.
 
-## Phase 8 — Paper / Demo Trading Engine
+## Phase 9 — Paper / Demo Trading Engine
 
 - `PaperTradingEngine`: run strategies on live/demo data without real funds.
 - Paper order tracking, equity curve, simulated SL/TP hits.
 
-## Phase 9 — Monitoring & Reporting
+## Phase 10 — Monitoring & Reporting
 
 - `MonitoringEngine`: record trades, errors, performance, system status.
 - Logging, dashboards/reports, alerts.
 - Performance reporting (equity curve, drawdown, trade log).
 
-## Phase 10 — Live Trading (only after Phases 1–9 validated on demo)
+## Phase 11 — Live Trading (only after Phases 1–10 validated on demo)
 
 - Unlock `ENABLE_LIVE_TRADING=true` only after extensive demo/paper validation.
 - PuPrime live account connection (MT5).
