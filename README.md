@@ -1,10 +1,12 @@
-# Forex Trading Bot — Phase 1 & 2
+# Forex Trading Bot — Phase 1, 2 & 3
 
 Professional, modular foundation for an automated Forex trading system intended
 to connect to MetaTrader 5 (MT5) and the PuPrime broker account. Phase 1
 establishes structure, configuration, data models, a mock broker adapter, and
 engine interfaces. Phase 2 adds a modular Market Data Engine with simulated
-and historical CSV data providers. **No real orders are placed and live trading is disabled.**
+and historical CSV data providers. Phase 3 adds a **read-only** MT5 integration
+for PU Prime **demo** connectivity (broker quotes and historical candles fed
+into the Phase 2 Market Data Engine). **No real orders are placed and live trading is disabled.**
 
 > **Disclaimer:** This software is for educational and development purposes. It
 > does not guarantee profits, and automated trading carries substantial risk of
@@ -13,15 +15,16 @@ and historical CSV data providers. **No real orders are placed and live trading 
 ## Environment
 
 - **OS:** Windows
-- **Python:** 3.13.15
+- **Python:** 3.13.15 (project requires >=3.10)
 - **pip:** 26.2.1
 - **Git:** 2.55.0
 - **IDE:** Google Antigravity (recommended)
-- **Trading platform (target):** MetaTrader 5
-- **Intended broker:** PuPrime
+- **Trading platform (target):** MetaTrader 5 Desktop Terminal
+- **Intended broker:** PU Prime (DEMO account only)
 
-Phase 1 and Phase 2 use only the Python standard library (no `pip install` required
-beyond `pytest` for testing). Later phases will add `pandas`, `numpy`, and the MT5 integration.
+Phase 1, Phase 2, and all unit tests use only the Python standard library (plus
+`pytest`). The MT5 integration is **optional**: the project still runs and
+passes all tests without the MetaTrader5 package or a running terminal.
 
 ## Project structure
 
@@ -29,37 +32,52 @@ beyond `pytest` for testing). Later phases will add `pandas`, `numpy`, and the M
 forex-trading-bot/
 ├── .env.example            # Copy to .env and fill in your values (never commit .env)
 ├ .gitignore
-├ pyproject.toml          # Package metadata
-├ README.md               # This file
+├ pyproject.toml            # Package metadata
+├ README.md                 # This file
 ├ docs/
 │   ├── ARCHITECTURE.md     # Module communication & design
 │   ├── ROADMAP.md          # Phase-by-phase development plan
 │   └── RISK_AND_SAFETY.md  # Safety rules & fail-safes
-├ src/                    # Application source (package)
+├ src/                      # Application source (package)
 │   ├── __init__.py
 │   ├── __main__.py         # Allows `python -m src`
 │   ├── config.py           # Centralized configuration + env loading
 │   ├── logging_config.py   # Logging setup (console + rotating file)
 │   ├── models.py           # Data models (tick, candle, order, position, account)
-│   ├── broker.py           # BrokerAdapter interface + MockBrokerAdapter
 │   ├── engines.py          # Abstract interfaces for all 10 engine modules
 │   ├── execution.py        # Trade execution engine (Phase 1 skeleton)
 │   ├── main.py             # Application entry point
-│   └── market_data/        # Phase 2: Market Data Engine
+│   ├── broker/             # Phase 1/3: Broker integration package
+│   │   ├── __init__.py     # Exports BrokerAdapter, MockBrokerAdapter (+MT5 lazily)
+│   │   ├── base.py         # BrokerAdapter interface + MockBrokerAdapter
+│   │   └── mt5/            # Phase 3: MT5 adapter (read-only, demo-only)
+│   │       ├── __init__.py
+│   │       ├── mt5_adapter.py       # BrokerAdapter implementation
+│   │       ├── connection.py        # Terminal discovery, init/shutdown, status
+│   │       ├── symbol_discovery.py  # Dynamic symbol discovery + canonical mapping
+│   │       ├── market_data.py       # Read-only quotes & historical candles/ticks
+│   │       └── exceptions.py        # MT5-specific exceptions
+│   ├── diagnostics/        # Phase 3: Diagnostics
+│   │   ├── __init__.py
+│   │   └── mt5_diagnostics.py       # Read-only connection diagnostic script
+│   └── market_data/        # Phase 2/3: Market Data Engine
 │       ├── __init__.py
 │       ├── base.py         # MarketDataProvider ABC
 │       ├── models.py       # MarketSymbol, MarketTimeframe, OHLCBar, MarketQuote, DataQualityReport, InstrumentSpec, MarketSession
-│       ├── mock_provider.py  # Simulated OHLC generator (seed-based, reproducible)
-│       ├── csv_provider.py   # Historical CSV data loader
-│       ├── validator.py      # Data validation engine (session-aware)
-│       ├── processor.py      # Data processing engine (sort, filter, gap detection)
-│       ├── service.py        # Service layer orchestrating providers
-│       ├── sessions.py       # Market session calendars
-│       └── demo.py           # Demonstration script
-├ tests/                  # Unit tests
-│   ├── test_foundation.py  # Phase 1 tests
-│   └── market_data/
-│       └── test_market_data.py  # Phase 2 tests
+│       ├── mock_provider.py   # Simulated OHLC generator (seed-based, reproducible)
+│       ├── csv_provider.py    # Historical CSV data loader
+│       ├── mt5_provider.py    # Phase 3: MT5 provider for the Market Data Engine
+│       ├── validator.py       # Data validation engine (session-aware)
+│       ├── processor.py       # Data processing engine (sort, filter, gap detection)
+│       ├── service.py         # Service layer orchestrating providers
+│       ├── sessions.py        # Market session calendars
+│       └── demo.py            # Demonstration script
+├ tests/                    # Unit tests
+│   ├── test_foundation.py   # Phase 1 tests
+│   ├── market_data/
+│   │   └── test_market_data.py  # Phase 2 tests
+│   └── broker/
+│       └── test_mt5_adapter.py  # Phase 3 tests (mocked MT5)
 └ docs/
     ├── ARCHITECTURE.md     # Module communication & design
     ├── ROADMAP.md          # Phase-by-phase development plan
@@ -84,6 +102,18 @@ forex-trading-bot/
 
    Edit `.env` if you want to override defaults (e.g. `LOG_LEVEL=DEBUG`).
    **Never store broker passwords or API keys in `.env`.**
+
+4. (Optional — only for MT5 live demo connectivity) Install the MT5 package:
+
+   ```powershell
+   pip install MetaTrader5
+   ```
+
+   Or install the optional dependency group:
+
+   ```powershell
+   pip install -e ".[mt5]"
+   ```
 
 ## Run the application
 
@@ -123,28 +153,137 @@ This demonstrates:
 4. Data processing (sort, filter, gap detection)
 5. Service layer orchestration
 
-## Run the tests
+## MT5 integration (Phase 3 — read-only, demo-only)
+
+### Prerequisites
+
+1. **MetaTrader 5 Desktop Terminal** must be installed on Windows.
+2. Open the terminal and **manually log into your PU Prime DEMO account**.
+   Leave the terminal running and logged in.
+3. Install the Python package: `pip install MetaTrader5`.
+
+The Python application **never** handles your password — it connects to the
+already-authenticated desktop terminal.
+
+### Configure the terminal path (optional)
+
+If auto-discovery cannot find the terminal, set the executable path either via
+environment variable (in `.env`):
+
+```
+MT5_TERMINAL_PATH=C:\Program Files\MetaTrader 5\terminal64.exe
+```
+
+or pass it explicitly on the command line (see diagnostics below).
+
+### Discover the assigned PU Prime server
+
+After logging into the terminal manually, run the diagnostics — the assigned
+server name is reported (e.g. `PUPrime-Demo`). If the terminal auto-connects
+to the correct demo server, no further configuration is needed.
+
+### Run connection diagnostics
+
+```powershell
+python -m src.diagnostics.mt5_diagnostics
+python -m src.diagnostics.mt5_diagnostics --terminal "C:\Program Files\MetaTrader 5\terminal64.exe"
+python -m src.diagnostics.mt5_diagnostics --symbol EURUSD
+python -m src.diagnostics.mt5_diagnostics --json
+```
+
+The diagnostic reports: Python version, MT5 package version, terminal
+connection status, terminal version/build, account mode (DEMO, or rejected
+LIVE), server name (safe summary only), discovered instrument count, the full
+symbol discovery report, selected symbol metadata, current quote, and
+historical candle retrieval status. It **never** prints passwords, login
+numbers, balances, or personal account information, and it **fails safely**
+when the terminal is unavailable.
+
+### MT5 IPC troubleshooting (-10005 IPC timeout)
+
+If `mt5.initialize()` fails with `(-10005, 'IPC timeout')` or similar:
+
+1. **Use the correct terminal executable.** Two installations were found on
+   this machine:
+   - `C:\Program Files\PU Prime MT5 Terminal\terminal64.exe` (PU Prime)
+   - `C:\Program Files\MetaTrader 5\terminal64.exe` (generic MetaQuotes)
+   Configure `MT5_TERMINAL_PATH` to point at the PU Prime terminal:
+   ```
+   MT5_TERMINAL_PATH=C:\Program Files\PU Prime MT5 Terminal\terminal64.exe
+   ```
+
+2. **The terminal must be running AND logged in before Python connects.**
+   Open MetaTrader 5, manually log into your PU Prime DEMO account, and keep
+   the terminal running. The adapter does not store or handle your password.
+
+3. **Only one terminal instance should run.** Multiple terminal processes can
+   cause IPC port conflicts (port 22346).
+
+4. **Python and terminal elevation must match.** Both should run at the same
+   privilege level (both unelevated, or both elevated).
+
+5. **Use the independent diagnostic for isolation:**
+   ```
+   python tools/mt5_connection_repair.py --terminal "C:\Program Files\PU Prime MT5 Terminal\terminal64.exe"
+   ```
+
+### Use MT5 data in the Market Data Engine
+
+```python
+from src.broker.mt5 import MT5BrokerAdapter
+from src.market_data.mt5_provider import MT5MarketDataProvider
+from src.market_data.service import MarketDataService
+from src.market_data.models import MarketTimeframe
+
+adapter = MT5BrokerAdapter(canonical_symbols=["XAUUSD", "EURUSD"])
+service = MarketDataService()
+
+provider = MT5MarketDataProvider(adapter)
+service.register_provider("mt5", provider)
+
+# Latest completed H1 candles (broker-provided, read-only)
+bars = service.get_candles(
+    "XAUUSD", MarketTimeframe.H1,
+    start_time=..., end_time=...,
+)
+quote = service.get_quote("XAUUSD")
+service.disconnect_all()
+```
+
+Every record returned by the MT5 provider flows through the existing Phase 2
+validation and processing (`DataSource.LIVE`) and is never mislabeled as
+simulated or historical CSV data.
+
+### Run automated tests
 
 ```powershell
 python -m pytest tests/ -v
 ```
 
-If `pytest` is not installed:
-
-```powershell
-pip install pytest
-python -m pytest tests/ -v
-```
+MT5 unit tests use a mocked MT5 interface — no terminal or account is
+required. Terminal-dependent real-connection testing is performed manually via
+the diagnostics script.
 
 ## Safety (mandatory)
 
 - Live trading is **disabled by default** (`ENABLE_LIVE_TRADING=false`, `TRADING_MODE=simulation`).
-- No real orders are placed in Phase 1 or Phase 2.
-- No broker credentials are requested or stored.
-- The mock broker and mock market data provider are used for all testing.
-- Live mode remains locked until a later development phase.
-- No MT5, PuPrime, or real broker connections in Phase 2.
-- No fabricated real market data — all simulated prices are explicitly labeled.
+- No real orders are placed in any phase.
+- The MT5 adapter is **read-only**: `place_order` and `close_order` are
+  hard-disabled (rejected with error 403); `get_orders` / `get_positions`
+  perform genuine read-only retrieval via `orders_get()` / `positions_get()`;
+  `order_send` / `order_check` are never called. The timeframe-less
+  `BrokerAdapter.get_candles` bridge fails explicitly to avoid mislabeled data.
+- The MT5 adapter accepts **demo accounts only** (official `trade_mode`
+  enumeration: demo accepted; contest and real rejected; missing account info
+  fails safely); it rejects before any market data is retrieved. It never
+  switches accounts, never attempts live login, and never enables live trading.
+- No broker credentials are requested or stored; the manually authenticated
+  desktop terminal is reused.
+- Passwords, login numbers, balances, and personal account data are never
+  printed or logged.
+- The mock broker and mock market data provider are used for all automated
+  testing.
+- No fabricated real market data — simulated prices are explicitly labeled.
 
 See `docs/RISK_AND_SAFETY.md` for the full safety policy.
 
@@ -177,7 +316,19 @@ See `docs/RISK_AND_SAFETY.md` for the full safety policy.
 - Comprehensive unit tests (68 Phase 2 tests)
 - Demonstration script (`src/market_data/demo.py`)
 
-## What remains (Phase 3+)
+### Phase 3 — MT5 Integration (read-only, demo-only)
+- MT5 connection management (terminal discovery, configurable executable path, init/shutdown, status, reconnection, last-error reporting)
+- Demo-only safety lock (account `trade_mode` checked before any data retrieval; live accounts rejected)
+- Dynamic broker symbol discovery + canonical ↔ broker symbol mapping (no ambiguous auto-selection)
+- Read-only current market quotes (bid/ask/last/timestamp/spread)
+- Historical OHLC candle retrieval for M1–D1, W1, MN1 with explicit completed-candle-only mode (starts at MT5 position 1)
+- Optional historical tick retrieval interface
+- MT5 provider integrated with the Phase 2 Market Data Engine (`DataSource.LIVE`)
+- Safe connection diagnostics script (`python -m src.diagnostics.mt5_diagnostics`)
+- Mocked unit tests (34 Phase 3 tests) with graceful handling when MT5 is not installed
+- Total: 115 tests passing (13 Phase 1 + 68 Phase 2 + 34 Phase 3)
+
+## What remains (Phase 4+)
 
 See `docs/ROADMAP.md`. Highlights:
 
@@ -188,7 +339,19 @@ See `docs/ROADMAP.md`. Highlights:
 - Backtesting engine
 - Paper/demo trading engine
 - Monitoring & reporting engine
-- MT5 broker adapter (Phase 3+)
+
+## Known limitations (Phase 3)
+
+- Real broker connection has **not** been tested yet — diagnostics must be run
+  on your machine with the PU Prime demo terminal open and logged in.
+- Broker-specific symbol names, contract sizes, and available instruments can
+  only be confirmed against the live demo server (auto-discovery + mapping
+  report).
+- Historical tick retrieval is an optional interface only (no continuous
+  streaming).
+- The Phase 1 `BrokerAdapter.get_candles` bridge uses a simplified conversion;
+  use the Phase 2 `MarketDataService`/`MT5MarketDataProvider` for full OHLC
+  fidelity (tick/real volume, spread, source provenance).
 
 ## License
 

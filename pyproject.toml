@@ -4,8 +4,8 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "forex-trading-bot"
-version = "0.1.0"
-description = "Phase 1 foundation for a modular automated Forex trading bot (MT5/PuPrime intended)."
+version = "0.3.0"
+description = "Phase 3 MT5 integration for a modular automated Forex trading bot (PU Prime Demo connectivity)."
 readme = "README.md"
 requires-python = ">=3.10"
 authors = [{ name = "Adnan" }]
@@ -15,6 +15,10 @@ keywords = ["forex", "trading", "bot", "mt5", "quantitative"]
 [project.optional-dependencies]
 dev = [
     "pytest>=8.0",
+    "pytest-mock>=3.12",
+]
+mt5 = [
+    "MetaTrader5>=5.0.45",
 ]
 
 [tool.setuptools.packages.find]

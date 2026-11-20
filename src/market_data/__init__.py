@@ -1,8 +1,8 @@
 """Market Data Engine package.
 
-Provides simulated and historical market data collection, validation, and
-processing for the Forex trading bot. All data is broker-agnostic; no MT5 or
-real broker connections are used in Phase 2.
+Provides simulated, historical, and live broker market data collection,
+validation, and processing for the Forex trading bot. Phase 3 adds MT5
+integration for PU Prime demo connectivity (read-only).
 """
 
 from src.market_data.base import MarketDataProvider
@@ -33,7 +33,7 @@ from src.market_data.sessions import (
 from src.market_data.service import MarketDataService
 from src.market_data.validator import DataValidator
 
-__version__ = "0.2.1"
+__version__ = "0.3.0"
 
 __all__ = [
     "MarketDataProvider",
@@ -60,3 +60,12 @@ __all__ = [
     "DEFAULT_INSTRUMENT_SPECS",
     "spec_for_symbol",
 ]
+
+# MT5 provider is optional - import lazily to avoid circular dependencies
+# and allow the package to work without MetaTrader5 installed.
+try:
+    from src.market_data.mt5_provider import MT5MarketDataProvider
+    __all__.append("MT5MarketDataProvider")
+except ImportError:
+    # MT5 provider not available (MetaTrader5 not installed)
+    pass

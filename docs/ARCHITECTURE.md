@@ -1,7 +1,8 @@
-# Architecture — Forex Trading Bot (Phases 1 & 2)
+# Architecture — Forex Trading Bot (Phases 1, 2 & 3)
 
 This document explains how the modules communicate and the design rationale
-behind the Phase 1 foundation and Phase 2 Market Data Engine.
+behind the Phase 1 foundation, Phase 2 Market Data Engine, and the Phase 3
+read-only MT5 integration.
 
 ## Design principles
 
@@ -11,6 +12,7 @@ behind the Phase 1 foundation and Phase 2 Market Data Engine.
 4. **Fail-safe by default** — missing data, connection failure, and unexpected
    errors degrade gracefully; live trading stays locked.
 5. **No secrets** — credentials are never stored or logged.
+6. **Demo-only safety** — broker connections accept demo accounts only.
 
 ## Module overview
 
@@ -21,7 +23,7 @@ behind the Phase 1 foundation and Phase 2 Market Data Engine.
 | Configuration | `src/config.py` | Centralized config + `.env` loading; trading-mode & safety flags |
 | Logging | `src/logging_config.py` | Console + rotating-file logging |
 | Data models | `src/models.py` | Instrument, Tick, Candle, Order, Position, AccountInfo, TradeResultModel |
-| Broker integration | `src/broker.py` | `BrokerAdapter` ABC + `MockBrokerAdapter` |
+| Broker integration | `src/broker/` | `BrokerAdapter` ABC + `MockBrokerAdapter` (in `base.py`) |
 | Engine interfaces | `src/engines.py` | Abstract interfaces for all 10 engine modules |
 | Trade execution | `src/execution.py` | Routes orders through risk + broker with live-trade lock |
 | Entry point | `src/main.py` | Wires config, logging, mock broker, execution engine |
@@ -39,6 +41,18 @@ behind the Phase 1 foundation and Phase 2 Market Data Engine.
 | Processor | `src/market_data/processor.py` | Sort, deduplicate, filter, gap detection |
 | Service | `src/market_data/service.py` | Orchestrates providers, validator, processor, instrument registry, session calendar |
 | Demo | `src/market_data/demo.py` | Demonstration script |
+
+### Phase 3 — MT5 Integration (read-only, demo-only)
+
+| Module | File | Responsibility |
+|--------|------|----------------|
+| MT5 adapter | `src/broker/mt5/mt5_adapter.py` | `BrokerAdapter` implementation (read-only; order placement/closing hard-disabled; read-only `orders_get()`/`positions_get()` retrieval; timeframe-less `get_candles` bridge fails explicitly) |
+| Connection | `src/broker/mt5/connection.py` | Terminal discovery, init/shutdown, status, reconnection, last-error reporting |
+| Symbol discovery | `src/broker/mt5/symbol_discovery.py` | Dynamic broker symbol discovery + canonical ↔ broker mapping |
+| Market data | `src/broker/mt5/market_data.py` | Read-only quotes, historical OHLC candles, optional historical ticks |
+| Exceptions | `src/broker/mt5/exceptions.py` | MT5-specific exception hierarchy |
+| MT5 provider | `src/market_data/mt5_provider.py` | `MarketDataProvider` implementation for the Phase 2 engine |
+| Diagnostics | `src/diagnostics/mt5_diagnostics.py` | Safe connection diagnostic script |
 
 ## Data flow (Phase 1)
 
@@ -58,33 +72,139 @@ main.py
 
 ```
 MarketDataService
-  ├─ register_provider(MockMarketDataProvider | HistoricalCSVProvider | future MT5)
+  ├─ register_provider(MockMarketDataProvider | HistoricalCSVProvider | MT5MarketDataProvider)
   ├─ provider.get_candles(symbol, timeframe, start, end) -> List[OHLCBar]
   ├─ DataProcessor.standardize(bars)        # sort, deduplicate
   ├─ DataValidator.validate_bars(...)       # quality report
   └─ return validated, standardized bars
 ```
 
-Future flow (Phase 3+):
+## Data flow (Phase 3 — MT5 read-only integration)
+
+```
+MT5BrokerAdapter.connect()
+  ├─ MT5ConnectionManager.initialize()           # discover terminal, mt5.initialize()
+  ├─ MT5AccountInfo.is_demo_account()            # DEMO-ONLY SAFETY LOCK (trade_mode == 0)
+  ├─ MT5SymbolDiscovery.discover_symbols()       # dynamic symbol list
+  ├─ MT5SymbolDiscovery.auto_map_symbols()       # canonical -> broker mapping
+  └─ MT5MarketData(connection, symbol_mapping)   # read-only data access
+
+MT5MarketDataProvider(adapter)                    # implements MarketDataProvider
+  └─ MarketDataService.register_provider("mt5", provider)
+       └─ get_candles/get_latest_candle/get_quote -> OHLCBar/MarketQuote (DataSource.LIVE)
+```
+
+Future flow (Phase 4+):
 
 ```
 MarketDataEngine -> IndicatorEngine -> StrategyEngine -> RiskManager ->
 TradeExecutionEngine -> BrokerAdapter -> (MT5 or Mock)
 ```
 
+## MT5 adapter architecture
+
+### Connection management (`connection.py`)
+
+- `MT5ConnectionManager` — discovers the terminal executable (env var
+  `MT5_TERMINAL_PATH`, standard Program Files paths, or AppData glob),
+  initializes/shuts down the MT5 API, checks connection health, and reports
+  the last error. Reuses a **manually authenticated** desktop terminal; the
+  Python app never handles passwords.
+- `MT5AccountInfo` — wraps `account_info()` and exposes only a demo/live
+  verdict and a safe summary (mode, server, currency). Never logs the full
+  account object, logins, or balances.
+
+### Demo-only safety lock
+
+Before any market data is retrieved, `MT5BrokerAdapter.connect()` checks
+`account_info().trade_mode` using the official MT5 enumeration
+(`ACCOUNT_TRADE_MODE_DEMO=0`, `ACCOUNT_TRADE_MODE_CONTEST=1`,
+`ACCOUNT_TRADE_MODE_REAL=2`). Only `trade_mode == 0` (demo) is accepted.
+Missing account information raises `MT5AccountError`; contest and real/live
+accounts raise `MT5LiveAccountError`; the adapter shuts the connection down and
+**no** market data is returned. The adapter never switches accounts, never
+attempts live login (never calls `mt5.login()`), and never enables trading.
+
+### Read-only orders and positions
+
+`get_orders()` and `get_positions()` perform genuine **read-only** retrieval via
+`orders_get()` / `positions_get()`, converting MT5 records into the Phase 1
+`Order` / `Position` models. They never place, modify, or cancel anything, and
+never call `order_send` or `order_check`. An empty list is returned only when
+the broker genuinely reports no orders/positions (or the call is unavailable).
+
+### Candle retrieval and the timeframe bridge
+
+`MT5MarketData.get_candles()` uses `copy_rates_range()` with the exact MT5
+timeframe constant for the requested `MarketTimeframe` (M1→1, M5→5, M15→15,
+M30→30, H1→60, H4→240, D1→1440, W1→10080, MN1→43200) and preserves
+open/high/low/close, tick volume, real volume, spread, UTC timestamps, and
+completed-candle status. The Phase 1 `BrokerAdapter.get_candles(symbol, count)`
+bridge carries no timeframe, so it **fails explicitly** with `MT5DataError`
+rather than silently returning mislabeled M1 candles. The authoritative
+timeframe-aware path is `MT5MarketDataProvider` used through
+`MarketDataService`.
+
+### Symbol discovery and mapping (`symbol_discovery.py`)
+
+- `discover_symbols()` calls `symbols_get()` and captures broker metadata
+  (description, currencies, digits, point, tick size/value, contract size,
+  min/max/step volume, trade mode, swaps, session volume, spread, margins,
+  path).
+- `find_broker_symbol(canonical)` matches against a known-variant table plus
+  common suffixes (`.cash`, `.raw`, `.ecn`, `.pro`, `m`, `.fx`). Ambiguous
+  matches are never auto-selected — the first (highest-confidence) candidate
+  is used and the mapping records the candidate count.
+- `to_instrument_spec()` converts broker metadata into an `InstrumentSpec`
+  (asset class inferred from symbol path/name, volume type from session
+  volume, all supported timeframes).
+- `generate_discovery_report()` produces a human-readable mapping report.
+
+### Market data (`market_data.py`)
+
+- `get_quote()` — uses `symbol_info_tick()`; returns bid/ask/last/timestamp
+  (UTC) as a `MarketQuote`.
+- `get_candles()` — uses `copy_rates_range()`; converts MT5 rates to
+  `OHLCBar` (UTC timestamps, tick/real volume, spread, `DataSource.LIVE`).
+  **Completed-candle handling:** bars are sorted by time; a bar whose period
+  end is in the future is treated as forming and skipped when
+  `completed_only=True` (never silently classified as complete).
+- `get_latest_candle()` — for completed-only retrieval starts at MT5
+  **position 1** per MT5 semantics (`copy_rates_from_pos(symbol, tf, 1, 1)`);
+  with `completed_only=False` returns the position-0 forming candle marked
+  `is_complete=False`.
+- `get_historical_ticks()` — optional read-only tick range interface (no
+  streaming).
+
+### Integration with the Phase 2 engine (`mt5_provider.py`)
+
+`MT5MarketDataProvider` implements the `MarketDataProvider` ABC. All records
+flow through the existing `DataProcessor.standardize()` and
+`DataValidator.validate_bars()` in `MarketDataService`, and are tagged
+`DataSource.LIVE` — never mislabeled as simulated or historical CSV data.
+
+### Diagnostics (`src/diagnostics/mt5_diagnostics.py`)
+
+Reports environment, MT5 package version, terminal connection status,
+terminal version/build, account mode (DEMO or rejected LIVE), safe server
+summary, discovered instrument count, full symbol discovery report, selected
+symbol metadata, current quote, and candle retrieval status. Fails safely
+when the terminal/package is unavailable and never exposes credentials or
+account identifiers.
+
 ## Inter-module dependencies
 
-### Phase 1 (unchanged)
+### Phase 1
 
 - `config.py` — depends on nothing in `src` (loads env only).
 - `logging_config.py` — depends on `config.py`.
 - `models.py` — depends on nothing.
-- `broker.py` — depends on `config.py`, `models.py`.
-- `engines.py` — depends on `broker.py`, `models.py`.
-- `execution.py` — depends on `config.py`, `broker.py`, `engines.py`, `models.py`.
-- `main.py` — depends on `config.py`, `logging_config.py`, `broker.py`, `engines.py`, `execution.py`, `models.py`.
+- `broker/base.py` — depends on `config.py`, `models.py`.
+- `engines.py` — depends on `broker/base.py`, `models.py`.
+- `execution.py` — depends on `config.py`, `broker`, `engines.py`, `models.py`.
+- `main.py` — depends on `config.py`, `logging_config.py`, `broker`, `engines.py`, `execution.py`, `models.py`.
 
-### Phase 2 (new)
+### Phase 2
 
 - `market_data/models.py` — depends on nothing external.
 - `market_data/base.py` — depends on `market_data/models.py`.
@@ -95,6 +215,21 @@ TradeExecutionEngine -> BrokerAdapter -> (MT5 or Mock)
 - `market_data/processor.py` — depends on `market_data/models.py`.
 - `market_data/service.py` — depends on `market_data/base.py`, `market_data/models.py`, `market_data/processor.py`, `market_data/sessions.py`, `market_data/validator.py`.
 - `market_data/demo.py` — depends on all market_data modules.
+
+### Phase 3
+
+- `broker/mt5/exceptions.py` — depends on nothing.
+- `broker/mt5/connection.py` — depends on `broker/mt5/exceptions.py` (MT5 imported lazily).
+- `broker/mt5/symbol_discovery.py` — depends on `market_data/models.py`, `broker/mt5/exceptions.py`.
+- `broker/mt5/market_data.py` — depends on `market_data/models.py`, `broker/mt5/connection.py`, `broker/mt5/exceptions.py`.
+- `broker/mt5/mt5_adapter.py` — depends on `broker/base.py`, `config.py`, `models.py`, `broker/mt5/*`.
+- `market_data/mt5_provider.py` — depends on `market_data/base.py`, `market_data/models.py`, `broker/mt5` (lazy).
+- `diagnostics/mt5_diagnostics.py` — depends on `broker/mt5` (lazy import so missing package fails safely).
+
+To avoid circular imports, the MT5 modules are imported lazily:
+`src/broker/__init__.py` and `src/market_data/__init__.py` append the MT5
+exports inside `try/except ImportError`, so the packages work without the
+MetaTrader5 dependency installed.
 
 ## Instrument Registry
 
@@ -175,13 +310,21 @@ There are no circular imports.
 - `MockMarketDataProvider` is explicitly simulated: `is_simulated=True`, all
   prices labeled as simulated. Never presented as genuine market data.
 - `HistoricalCSVProvider` reads local files only; no network access.
-- No MT5, PuPrime, or real broker connections in Phase 2.
+- `MT5BrokerAdapter` is **read-only**: `place_order` and `close_order` are
+  hard-disabled (rejected with error 403). `get_orders` / `get_positions`
+  perform genuine read-only retrieval via `orders_get()` / `positions_get()`
+  (empty only when the broker reports none). It never calls `order_send` or
+  `order_check`.
+- `MT5BrokerAdapter` accepts **demo accounts only** (`trade_mode == 0`). A live
+  account raises `MT5LiveAccountError` and shuts the connection down before any
+  data is retrieved.
+- MT5 market data is tagged `DataSource.LIVE` and flows through the Phase 2
+  validator — never mislabeled as simulated/historical.
 - Live routing remains gated by `live_locked`.
 
-## Extending to Phase 3
+## Extending to Phase 4
 
 1. Add `src/indicators/` with `IndicatorEngine` implementations (EMA, SMA, RSI, MACD, BB, ATR, ADX, Stochastic).
 2. Add `src/strategies/` with `Strategy` implementations.
 3. Add `src/risk/` with `RiskManager` implementation.
-4. Add `src/mt5_broker.py` implementing `BrokerAdapter` using the MT5 library (Phase 3+).
-5. Wire new engines into `main.py`.
+4. Wire new engines into `main.py`.

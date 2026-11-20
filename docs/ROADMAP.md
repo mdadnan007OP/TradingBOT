@@ -1,6 +1,7 @@
 # Development Roadmap — Forex Trading Bot
 
 Phase 1 (complete): foundation. Phase 2 (complete): Market Data Engine.
+Phase 3 (complete): read-only MT5 integration (PU Prime demo connectivity).
 Subsequent phases build toward a production-ready MT5/PuPrime bot.
 Dates are targets only.
 
@@ -33,15 +34,24 @@ Dates are targets only.
 - Comprehensive unit tests (68 Phase 2 tests)
 - Demonstration script (`src/market_data/demo.py`)
 
-## Phase 3 — MT5 Broker Adapter
+## Phase 3 — MT5 Integration, PU Prime Demo Connectivity (DONE)
 
-- Implement `Mt5BrokerAdapter` (MetaTrader 5) behind `BrokerAdapter`.
-- Add connection, disconnection, account info, instruments, ticks, candles.
-- Add reconnection logic and fail-safe for connection failure.
-- Verify broker specifications (symbol availability, lot sizes, point, spreads)
-  with PuPrime on demo before assuming anything.
-- Add config flags: `BROKER=mock|mt5`, `MT5_PATH`, `MT5_SERVER`, `MT5_LOGIN`.
-- Live trading remains locked.
+- `MT5BrokerAdapter` behind `BrokerAdapter` (read-only, demo-only)
+- Connection management: terminal discovery, configurable executable path
+  (`MT5_TERMINAL_PATH`), init/shutdown, status, reconnection, last-error reporting
+- Demo-only safety lock: `account_info().trade_mode` verified before any data
+  retrieval; live accounts rejected (`MT5LiveAccountError`); no account switching,
+  no live login, no order placement/modification
+- Dynamic broker symbol discovery + canonical ↔ broker mapping (no ambiguous
+  auto-selection; readable discovery report)
+- Read-only current market quotes (bid/ask/last/timestamp/spread)
+- Historical OHLC candles (M1–D1, W1, MN1) with explicit completed-candle-only
+  mode (starts at MT5 position 1; forming candles never classified as complete)
+- Optional read-only historical tick interface
+- MT5 provider integrated with the Phase 2 Market Data Engine (`DataSource.LIVE`)
+- Safe diagnostics script (`python -m src.diagnostics.mt5_diagnostics`)
+- Mocked unit tests (41 Phase 3 tests); graceful handling when MT5 is not installed
+- Total: 122 tests passing (13 Phase 1 + 68 Phase 2 + 41 Phase 3)
 
 ## Phase 4 — Technical Indicator Engine
 
