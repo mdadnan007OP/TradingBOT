@@ -1,4 +1,4 @@
-# Forex Trading Bot — Phase 1, 2, 3 & 4
+# Forex Trading Bot — Phase 1, 2, 3, 4 & 5
 
 Professional, modular foundation for an automated Forex trading system intended
 to connect to MetaTrader 5 (MT5) and the PuPrime broker account. Phase 1
@@ -7,7 +7,10 @@ engine interfaces. Phase 2 adds a modular Market Data Engine with simulated
 and historical CSV data providers. Phase 3 adds a **read-only** MT5 integration
 for PU Prime **demo** connectivity (broker quotes and historical candles fed
 into the Phase 2 Market Data Engine). Phase 4 adds a **Technical Indicator
-Engine** (trend, momentum, volatility, volume, levels). **No real orders are placed and live trading is disabled.**
+Engine** (trend, momentum, volatility, volume, levels). Phase 5 adds a
+**Multi-Strategy Engine** that generates standardized trading signals
+(LONG / SHORT / NONE) from multiple independent strategies. **No real orders
+are placed and live trading is disabled.**
 
 > **Disclaimer:** This software is for educational and development purposes. It
 > does not guarantee profits, and automated trading carries substantial risk of
@@ -327,7 +330,7 @@ See `docs/RISK_AND_SAFETY.md` for the full safety policy.
 - MT5 provider integrated with the Phase 2 Market Data Engine (`DataSource.LIVE`)
 - Safe connection diagnostics script (`python -m src.diagnostics.mt5_diagnostics`)
 - Mocked unit tests (41 Phase 3 tests) with graceful handling when MT5 is not installed
-- Total: 197 tests passing (13 Phase 1 + 68 Phase 2 + 41 Phase 3 + 75 Phase 4).
+- Total: 335 tests passing (13 Phase 1 + 68 Phase 2 + 41 Phase 3 + 75 Phase 4 + 138 Phase 5).
 
 ### Phase 4 — Technical Indicator Engine
 - `src/indicators/` package: `Indicator` ABC, `IndicatorParameters`, `IndicatorResult`, `ReadinessStatus`.
@@ -341,6 +344,39 @@ See `docs/RISK_AND_SAFETY.md` for the full safety policy.
 - Completed candles by default; `allow_incomplete` opt-in (no look-ahead); causal Ichimoku spans.
 - Readiness: INSUFFICIENT / WARMING_UP / READY.
 - Comprehensive unit tests per indicator against known values.
+
+## Phase 5 — Strategy Engine (DONE)
+
+- `src/strategies/` package: `Signal`, `SignalDirection`, `SignalStatus`,
+  `MarketRegime`, `Strategy` ABC, `StrategyResult`.
+- `StrategyRegistry` (register/get/exists/enable/disable/list/parameters).
+- `StrategyManager` (fault-isolated execution, conflict detection, aggregation).
+- `SignalService` (indicator→strategy bridge, market regime detection).
+- `SignalGenerator` (multi-indicator confirmation engine).
+- `SignalConflictResolver` (conflict detection + configurable aggregation
+  policies: report_conflicts, consensus, majority, unanimous).
+- `MarketRegimeDetector` (TRENDING, RANGING, HIGH_VOLATILITY, LOW_VOLATILITY,
+  TRANSITIONING, UNKNOWN using ADX/ATR/moving averages).
+- Strategies: TrendFollowing (EMA/SMA/ADX/MACD/RSI), PriceAction (engulfing,
+  pin bars, BOS, CHoCH), LiquidityHunting (equal highs/lows, sweeps),
+  Trendline (swing pivots, touches, breakouts, retests),
+  DailyHighLow (prev day/week high/low breakouts/rejections).
+- Profiles: ScalpingProfile (M1/M5/M15), IntradayProfile (M5/M15/M30/H1),
+  SwingProfile (H1/H4/D1/W1).
+- Standardized `Signal` model with full provenance (signal ID, strategy name,
+  instrument, direction, timestamps, reference price, technical invalidation,
+  indicator snapshot, market regime, confirmation conditions, explanation).
+- Decimal arithmetic throughout; no order execution; no look-ahead bias.
+- Fault isolation: one failed strategy does not crash the system.
+- Signal lifecycle management: unique signal IDs, expiration timestamps,
+  technical invalidation levels, duplicate signal prevention, config fingerprints
+  for parameter reproducibility.
+- Signal quality validation: candle count, OHLC validity, completeness,
+  data freshness, indicator readiness checks with explicit rejection categories.
+- Risk interface export: `RiskInterfaceSignal` for Phase 6 integration.
+- Comprehensive quality audit tests: duplicate signals, expiration, invalidation,
+  versioning, explainability, stale data, invalid indicators, risk interface,
+  look-ahead prevention.
 
 ## What remains (Phase 5+)
 

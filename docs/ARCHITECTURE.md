@@ -352,9 +352,155 @@ There are no circular imports.
   validator — never mislabeled as simulated/historical.
 - Live routing remains gated by `live_locked`.
 
-## Extending to Phase 4
+## Extending to Phase 6
 
-1. Add `src/indicators/` with `IndicatorEngine` implementations (EMA, SMA, RSI, MACD, BB, ATR, ADX, Stochastic).
-2. Add `src/strategies/` with `Strategy` implementations.
-3. Add `src/risk/` with `RiskManager` implementation.
-4. Wire new engines into `main.py`.
+1. Add `src/risk/` with `RiskManager` implementation (position sizing,
+   SL/TP, daily loss limits).
+2. Wire risk manager into `TradeExecutionEngine` for order validation.
+3. Strategies remain signal-only; risk/execution handled in later phases.
+
+## Phase 5 — Strategy Engine
+
+| Module | File | Responsibility |
+|--------|------|----------------|
+| Signal model | `src/strategies/base.py` | `Signal`, `SignalDirection`, `SignalStatus`, `MarketRegime`, `Strategy` ABC, `StrategyResult`, `SignalRejection` |
+| Registry | `src/strategies/registry.py` | `StrategyRegistry` — register/get/exists/enable/disable/list/parameters/strategy_info |
+| Models | `src/strategies/models.py` | `StrategyParameters`, `ConfirmationCondition`, `ConfirmationRule`, `IndicatorSnapshot` |
+| Service | `src/strategies/service.py` | `SignalService` — indicator→strategy bridge, market regime detection, signal construction |
+| Signal generator | `src/strategies/signal_generator.py` | `ConfirmationEvaluator`, `SignalGenerator` — multi-indicator confirmation rules |
+| Manager | `src/strategies/manager.py` | `StrategyManager` — fault-isolated execution, conflict detection, aggregation |
+| Conflict resolver | `src/strategies/conflict_resolver.py` | `SignalConflictResolver` — conflict detection + aggregation policies |
+| Market regime | `src/strategies/market_regime.py` | `MarketRegimeDetector` — TRENDING/RANGING/HIGH_VOLATILITY/LOW_VOLATILITY/TRANSITIONING/UNKNOWN |
+| Trend following | `src/strategies/trend_following/trend_following.py` | `TrendFollowingStrategy` — EMA/SMA/ADX/MACD/RSI trend continuation/pullback |
+| Price action | `src/strategies/price_action/price_action.py` | `PriceActionStrategy` — engulfing, pin bars, BOS, CHoCH, support/resistance rejection |
+| Liquidity hunting | `src/strategies/liquidity/liquidity_hunting.py` | `LiquidityHuntingStrategy` — equal highs/lows, sweeps, close-back-inside |
+| Trendline | `src/strategies/trendline/trendline.py` | `TrendlineStrategy` — swing pivots, trendlines, touches, breakouts, retests |
+| Daily high/low | `src/strategies/daily_levels/daily_high_low.py` | `DailyHighLowStrategy` — prev day/week H/L breakouts and rejections |
+| Scalping profile | `src/strategies/scalping/scalping_profile.py` | `ScalpingProfile` — M1/M5/M15 short-term profiles |
+| Intraday profile | `src/strategies/intraday/intraday_profile.py` | `IntradayProfile` — M5/M15/M30/H1 session-aware profiles |
+| Swing profile | `src/strategies/swing/swing_profile.py` | `SwingProfile` — H1/H4/D1/W1 multi-day profiles |
+
+### Data flow (Phase 5)
+
+```
+MarketDataService -> IndicatorEngine -> SignalService ->
+  MarketRegimeDetector -> Individual Strategies ->
+  StrategyManager (fault-isolated) ->
+  SignalConflictResolver ->
+  Standardized Signals (no order execution)
+```
+
+### Design
+
+- **Signal-only**: Strategies produce `Signal` objects (LONG/SHORT/NONE),
+  never `OrderRequest`. No order placement, modification, or closing.
+- **Fault isolation**: `StrategyManager` wraps each strategy in try/except;
+  one failure does not crash the system. Errors are logged and recorded.
+- **Look-ahead safe**: Completed candles only by default; `allow_incomplete`
+  opt-in via the Phase 4 IndicatorEngine.
+- **Decimal arithmetic**: All price calculations use `Decimal`.
+- **Multi-timeframe**: Entry timeframe + confirmation timeframes explicitly
+  tracked in every signal.
+- **Market regime**: Strategies declare supported regimes; mismatched regimes
+  produce rejections, not signals.
+- **Conflict preservation**: Conflicting signals are reported, not resolved
+  by forcing a trade decision.
+
+### Inter-module dependencies
+
+- `src/strategies/base.py` — depends on `src/indicators/base.py`,
+  `src/market_data/models.py`.
+- `src/strategies/registry.py` — depends on `src/strategies/base.py`.
+- `src/strategies/models.py` — depends on `src/indicators/base.py`,
+  `src/market_data/models.py`.
+- `src/strategies/market_regime.py` — depends on `src/indicators/service.py`,
+  `src/indicators/base.py`, `src/market_data/models.py`.
+- `src/strategies/signal_generator.py` — depends on `src/indicators/base.py`,
+  `src/market_data/models.py`, `src/strategies/models.py`.
+- `src/strategies/service.py` — depends on all strategy modules +
+  `src/indicators/service.py`.
+- `src/strategies/manager.py` — depends on all strategy modules +
+  `src/strategies/service.py`, `src/strategies/conflict_resolver.py`.
+- `src/strategies/conflict_resolver.py` — depends on `src/strategies/base.py`.
+- `src/strategies/{trend_following,price_action,liquidity,trendline,daily_levels,scalping,intraday,swing}/*.py` — depend on `base.py`, `models.py`, `service.py`, `src/indicators/service.py`.
+- `src/strategies/__init__.py` — wires `create_strategy_manager()` factory.
+
+### Safety boundaries (Phase 5)
+
+- Strategies never call `place_order`, `close_order`, `order_send`, or
+  `order_check`. They return `Signal` objects only.
+- `ENABLE_LIVE_TRADING` remains `False`; `live_locked` stays active.
+- No account switching, no live login.
+- All data source provenance preserved
+  (`DataSource.SIMULATED`/`HISTORICAL`/`LIVE`).
+
+### Signal Lifecycle Management (Phase 5 Quality Audit)
+
+Every signal carries full lifecycle management:
+
+- **Unique identification**: `signal_id` (UUID4) plus `duplicate_key` for
+  deduplication across strategy runs.
+- **Creation timestamp**: `signal_timestamp` (UTC) recorded at generation.
+- **Validity period**: `signal_valid_until` computed from
+  `max_signal_age_minutes`; `is_expired()` check available.
+- **Invalidation**: `technical_invalidation` price level; `is_invalidated(price)`
+  checks if price has crossed the invalidation threshold.
+- **Duplicate prevention**: `duplicate_key` combines strategy + symbol +
+  timeframe + market data timestamp; `SignalService` tracks seen keys and
+  rejects duplicates.
+- **Status tracking**: `ACTIVE`, `EXPIRED`, `REJECTED`, `NO_SIGNAL`; only
+  `ACTIVE` and non-expired signals are actionable.
+
+### Signal Quality Validation (Phase 5 Quality Audit)
+
+Before analysis, `SignalService.validate_signal_prerequisites()` verifies:
+
+- Sufficient candle count (configurable minimum).
+- Valid OHLC relationships (high >= low, high >= open/close, low <= open/close).
+- Completed candles only (incomplete/forming bars excluded by default).
+- Data freshness (max staleness in minutes).
+- Required indicator availability and readiness.
+
+Failures produce `SignalRejection` with a machine-readable category
+(`insufficient_data`, `invalid_ohlc`, `incomplete_candle`, `stale_data`,
+`unsupported_timeframe`, `unavailable_indicator`, `invalid_configuration`,
+`regime_unsupported`, `strategy_error`, `duplicate_signal`, `no_signal_condition`)
+and a human-readable reason. Rejections are never silently discarded.
+
+### Strategy Versioning (Phase 5 Quality Audit)
+
+- `strategy_name` and `strategy_version` on every signal.
+- `config_fingerprint`: SHA-256 hash of strategy parameters for
+  reproducibility. Historical signals can be traced to the exact
+  parameter configuration.
+- `compute_config_fingerprint()` utility in `src/strategies/models.py`.
+
+### Risk Management Integration Contract (Phase 5 → Phase 6)
+
+`RiskInterfaceSignal` is the standardized boundary between Phase 5
+(Strategy Engine) and Phase 6 (Risk Management Engine). Phase 5 produces
+signals; Phase 6 consumes them for risk evaluation, position sizing, and
+stop-loss/take-profit calculation. No order execution occurs at this boundary.
+
+Fields include: signal_id, strategy_name, strategy_version,
+config_fingerprint, symbol, instrument_type, direction, signal_timestamp,
+signal_valid_until, market_data_timestamp, reference_price,
+technical_invalidation, market_regime, confirmation_conditions,
+failed_conditions, explanation, expiry_conditions, data_source,
+indicator_snapshot, parameters, entry_timeframe, confirmation_timeframes.
+
+Responsibility separation:
+- Phase 5: Signal generation only (no order placement, no risk calculation).
+- Phase 6: Risk evaluation, position sizing, SL/TP, exposure limits.
+
+### Signal Explainability
+
+Every signal includes:
+- Strategy name and version
+- Indicators used (snapshot with values)
+- Conditions satisfied and failed
+- Timeframes considered (entry + confirmation)
+- Market regime detected
+- Explanation string
+- Technical invalidation level (NOT a stop-loss)
+- Expiry conditions

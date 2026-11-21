@@ -67,12 +67,33 @@ Dates are targets only.
 - Warm-up: SMA/EMA period−1, RSI period, ADX 2·period, Ichimoku span_b−1; Readiness: INSUFFICIENT / WARMING_UP / READY.
 - Unit tests per indicator against known values; all phases total 197 tests passing.
 
-## Phase 5 — Strategy Engine
+## Phase 5 — Strategy Engine (DONE)
 
-- `Strategy` ABC (`on_tick`, `on_candle`, `enabled`).
-- `StrategyEngine` (register/enable/disable/dispatch).
-- Starter strategies: EMA crossover, RSI mean-reversion, breakout (skeletons,
-  clearly marked non-operational until backtested).
+- `src/strategies/` package: `Signal`, `SignalDirection`, `SignalStatus`,
+  `MarketRegime`, `Strategy` ABC, `StrategyResult`.
+- `StrategyRegistry` (register/get/exists/enable/disable/list/parameters).
+- `StrategyManager` (fault-isolated execution, conflict detection, aggregation).
+- `SignalService` (indicator→strategy bridge, market regime detection).
+- `SignalGenerator` (multi-indicator confirmation engine).
+- `SignalConflictResolver` (conflict detection + configurable aggregation
+  policies: report_conflicts, consensus, majority, unanimous).
+- `MarketRegimeDetector` (TRENDING, RANGING, HIGH_VOLATILITY, LOW_VOLATILITY,
+  TRANSITIONING, UNKNOWN using ADX/ATR/moving averages).
+- Strategies: TrendFollowing (EMA/SMA/ADX/MACD/RSI), PriceAction (engulfing,
+  pin bars, BOS, CHoCH), LiquidityHunting (equal highs/lows, sweeps),
+  Trendline (swing pivots, touches, breakouts, retests),
+  DailyHighLow (prev day/week high/low breakouts/rejections).
+- Profiles: ScalpingProfile (M1/M5/M15), IntradayProfile (M5/M15/M30/H1),
+  SwingProfile (H1/H4/D1/W1).
+- Signal lifecycle management: unique signal IDs, expiration timestamps,
+  technical invalidation levels, duplicate signal prevention, config fingerprints
+  for parameter reproducibility.
+- Signal quality validation: candle count, OHLC validity, completeness,
+  data freshness, indicator readiness checks with explicit rejection categories.
+- Risk interface export: `RiskInterfaceSignal` for Phase 6 integration.
+- Quality audit: signal lifecycle verification, conflict-resolution verification,
+  risk integration interface, look-ahead prevention verified.
+- Total: 335 tests passing (13 Phase 1 + 68 Phase 2 + 41 Phase 3 + 75 Phase 4 + 138 Phase 5).
 
 ## Phase 6 — Risk Management Engine
 

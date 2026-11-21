@@ -97,7 +97,25 @@ diagnostics script.
   completed-candle-only mode starts at MT5 position 1.
 - Historical CSV data is never overwritten or mislabeled by broker data.
 
-## 13. Escalation
+## 13. Phase 5 — Strategy Engine Safety
+
+Phase 5 is a signal-generation phase only. The following restrictions apply:
+
+- Strategies produce `Signal` objects (LONG/SHORT/NONE) — never `OrderRequest`.
+- No `place_order`, `close_order`, `order_send`, or `order_check` calls.
+- No order placement, modification, or closing of any kind.
+- Strategies cannot access broker execution code or account state.
+- `ENABLE_LIVE_TRADING` remains `False`; `live_locked` stays active.
+- No automatic account switching or live login.
+- All signal data source provenance is preserved
+  (`DataSource.SIMULATED`/`HISTORICAL`/`LIVE`).
+- Signal scores or weights are NOT presented as probabilities of winning
+  unless separately calibrated and statistically validated.
+- Conflicting signals are reported, not resolved by forcing a trade decision.
+- One failed strategy does not crash the system (fault isolation).
+- Errors are logged; they are never silently suppressed.
+
+## 14. Escalation
 
 If any of these rules conflicts with a planned feature, pause implementation
 and review before proceeding.
