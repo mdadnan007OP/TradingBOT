@@ -1,4 +1,4 @@
-# Forex Trading Bot — Phase 1, 2 & 3
+# Forex Trading Bot — Phase 1, 2, 3 & 4
 
 Professional, modular foundation for an automated Forex trading system intended
 to connect to MetaTrader 5 (MT5) and the PuPrime broker account. Phase 1
@@ -6,7 +6,8 @@ establishes structure, configuration, data models, a mock broker adapter, and
 engine interfaces. Phase 2 adds a modular Market Data Engine with simulated
 and historical CSV data providers. Phase 3 adds a **read-only** MT5 integration
 for PU Prime **demo** connectivity (broker quotes and historical candles fed
-into the Phase 2 Market Data Engine). **No real orders are placed and live trading is disabled.**
+into the Phase 2 Market Data Engine). Phase 4 adds a **Technical Indicator
+Engine** (trend, momentum, volatility, volume, levels). **No real orders are placed and live trading is disabled.**
 
 > **Disclaimer:** This software is for educational and development purposes. It
 > does not guarantee profits, and automated trading carries substantial risk of
@@ -325,20 +326,27 @@ See `docs/RISK_AND_SAFETY.md` for the full safety policy.
 - Optional historical tick retrieval interface
 - MT5 provider integrated with the Phase 2 Market Data Engine (`DataSource.LIVE`)
 - Safe connection diagnostics script (`python -m src.diagnostics.mt5_diagnostics`)
-- Mocked unit tests (34 Phase 3 tests) with graceful handling when MT5 is not installed
-- Total: 115 tests passing (13 Phase 1 + 68 Phase 2 + 34 Phase 3)
+- Mocked unit tests (41 Phase 3 tests) with graceful handling when MT5 is not installed
+- Total: 197 tests passing (13 Phase 1 + 68 Phase 2 + 41 Phase 3 + 75 Phase 4).
 
-## What remains (Phase 4+)
+### Phase 4 — Technical Indicator Engine
+- `src/indicators/` package: `Indicator` ABC, `IndicatorParameters`, `IndicatorResult`, `ReadinessStatus`.
+- `IndicatorRegistry` (register/get/exists/supported_indicators/parameter_schema/validate_parameters/unregister) and `IndicatorEngine` service (`calculate()` returning rich `IndicatorResult`; `compute()` ABC compatibility).
+- Trend: SMA (multi-period), EMA, ADX, Ichimoku Cloud.
+- Momentum: RSI (Wilder's), MACD, Stochastic, CCI, Williams %R.
+- Volatility: ATR, Bollinger Bands (population std dev).
+- Levels: Classic Pivot Points.
+- Volume: VWAP.
+- Decimal arithmetic throughout; results aligned 1:1 with input candles (`None` during warm-up).
+- Completed candles by default; `allow_incomplete` opt-in (no look-ahead); causal Ichimoku spans.
+- Readiness: INSUFFICIENT / WARMING_UP / READY.
+- Comprehensive unit tests per indicator against known values.
+
+## What remains (Phase 5+)
 
 See `docs/ROADMAP.md`. Highlights:
 
-- Technical indicator engine (EMA, SMA, RSI, MACD, BB, ATR, ADX, Stochastic)
-- Strategy engine + concrete strategies
 - Risk management engine (position sizing, SL/TP, daily loss limits)
-- News/economic calendar engine (legitimate sources only, respect terms of use)
-- Backtesting engine
-- Paper/demo trading engine
-- Monitoring & reporting engine
 
 ## Known limitations (Phase 3)
 

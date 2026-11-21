@@ -53,11 +53,19 @@ Dates are targets only.
 - Mocked unit tests (41 Phase 3 tests); graceful handling when MT5 is not installed
 - Total: 122 tests passing (13 Phase 1 + 68 Phase 2 + 41 Phase 3)
 
-## Phase 4 — Technical Indicator Engine
+## Phase 4 — Technical Indicator Engine (DONE)
 
-- Implement EMA, SMA, RSI, MACD, Bollinger Bands, ATR, ADX, Stochastic.
-- `IndicatorEngine.compute(name, symbol, candles, **params)` contract.
-- Unit tests per indicator against known values.
+- `src/indicators/` package: `Indicator` ABC, `IndicatorParameters`, `IndicatorResult`, `ReadinessStatus`.
+- `IndicatorRegistry` (register/get/exists/supported_indicators/parameter_schema/validate_parameters/unregister) and `IndicatorEngine` service (`calculate()` returning rich `IndicatorResult`; `compute()` ABC compatibility).
+- Trend: SMA (multi-period), EMA, ADX, Ichimoku Cloud.
+- Momentum: RSI (Wilder's), MACD, Stochastic, CCI, Williams %R.
+- Volatility: ATR, Bollinger Bands (population std dev).
+- Levels: Classic Pivot Points.
+- Volume: VWAP.
+- Decimal arithmetic throughout; results aligned 1:1 with input candles (`None` during warm-up).
+- Completed candles by default; `allow_incomplete` opt-in (no look-ahead); causal Ichimoku spans.
+- Warm-up: SMA/EMA period−1, RSI period, ADX 2·period, Ichimoku span_b−1; Readiness: INSUFFICIENT / WARMING_UP / READY.
+- Unit tests per indicator against known values; all phases total 197 tests passing.
 
 ## Phase 5 — Strategy Engine
 

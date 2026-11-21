@@ -101,7 +101,37 @@ MarketDataEngine -> IndicatorEngine -> StrategyEngine -> RiskManager ->
 TradeExecutionEngine -> BrokerAdapter -> (MT5 or Mock)
 ```
 
-## MT5 adapter architecture
+## Phase 4 — Technical Indicator Engine
+
+| Module | File | Responsibility |
+|--------|------|----------------|
+| Indicator base | `src/indicators/base.py` | `Indicator` ABC, `IndicatorParameters`, `IndicatorResult`, `ReadinessStatus` |
+| Registry | `src/indicators/registry.py` | `IndicatorRegistry` — register/get/exists/supported_indicators/parameter_schema/validate_parameters/unregister |
+| Calculator | `src/indicators/calculator.py` | Shared math: SMA, EMA, Wilder smoothing, typical price, mean deviation, true range, std dev, rolling sum |
+| Service | `src/indicators/service.py` | `IndicatorEngine` — `calculate()` returning rich `IndicatorResult`; `compute()` ABC compatibility |
+| Trend | `src/indicators/trend/{sma,ema,adx,ichimoku}.py` | SMA, EMA, ADX, Ichimoku Cloud |
+| Momentum | `src/indicators/momentum/{rsi,macd,stochastic,cci,williams_r}.py` | RSI (Wilder's), MACD, Stochastic, CCI, Williams %R |
+| Volatility | `src/indicators/volatility/{atr,bollinger_bands}.py` | ATR, Bollinger Bands (population std dev) |
+| Levels | `src/indicators/levels/pivot_points.py` | Classic Pivot Points |
+| Volume | `src/indicators/volume/vwap.py` | VWAP |
+
+### Design
+
+- **Decimal arithmetic** throughout; no floating-point drift.
+- **Results aligned 1:1** with input candles (`None` during warm-up; no look-ahead).
+- **Completed candles by default**; `allow_incomplete` opt-in.
+- **Readiness**: `INSUFFICIENT` → `WARMING_UP` → `READY` as data accumulates.
+- **Warm-up**: SMA/EMA `period−1`, RSI `period`, ADX `2·period`, Ichimoku `span_b−1`.
+- `compute()` maps `None` values to `float("nan")` for legacy ABC compatibility.
+
+### Inter-module dependencies
+
+- `src/indicators/base.py` — depends on `src/market_data/models.py` only.
+- `src/indicators/calculator.py` — depends on `src/market_data/models.py` only.
+- `src/indicators/{trend,momentum,volatility,levels,volume}/*.py` — depend on `base.py`, `calculator.py`, `market_data/models.py`.
+- `src/indicators/registry.py` — depends on `base.py`.
+- `src/indicators/service.py` — depends on `base.py`, `registry.py`, `market_data/models.py`.
+- `src/indicators/__init__.py` — wires `create_engine()` factory.
 
 ### Connection management (`connection.py`)
 
