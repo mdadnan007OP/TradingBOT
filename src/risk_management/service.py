@@ -22,7 +22,10 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from decimal import Decimal
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, TYPE_CHECKING
+
+if TYPE_CHECKING:  # avoid hard dependency on the news package
+    from src.news.models import NewsRiskContext
 
 from src.market_data.models import DataSource, InstrumentSpec
 from src.risk_management.base import (
@@ -160,8 +163,18 @@ class RiskEngine(RiskEngineABC):
         self,
         params: RiskParameters,
         account: AccountSnapshot,
+        news_context: Optional["NewsRiskContext"] = None,
     ) -> RiskDecision:
-        """Evaluate a proposed trade signal through the full pipeline."""
+        """Evaluate a proposed trade signal through the full pipeline.
+
+        Args:
+            params: The proposed signal parameters.
+            account: Account snapshot.
+            news_context: Optional news/economic-calendar context. When provided,
+                new entries may be blocked or flagged by the news gate. When
+                ``None`` (default), no news gate applies — fully backward
+                compatible with callers that do not use the news engine.
+        """
         reasons: List[str] = []
         warnings: List[str] = []
         status = RiskDecisionStatus.APPROVED
@@ -187,7 +200,28 @@ class RiskEngine(RiskEngineABC):
                 data_source=self.data_source,
             )
 
-        # --- 1. Signal validation ---
+        # --- 0.5 News / economic-calendar gate (optional) ---
+        if news_context is not None:
+            if news_context.blocks_new_entries:
+                reason = news_context.restriction_reason or "News window restriction"
+                return RiskDecision(
+                    signal_id=params.signal_id,
+                    symbol=params.symbol,
+                    instrument_type=params.instrument_type,
+                    direction=params.direction,
+                    status=RiskDecisionStatus.REJECTED,
+                    rejection_reasons=[
+                        f"New entry blocked by news window: {reason}"
+                    ],
+                    account_timestamp=account.timestamp,
+                    policy_version=self.config.policy.version if self.config else None,
+                    data_source=self.data_source,
+                )
+            if news_context.is_caution:
+                warnings.append(
+                    news_context.restriction_reason
+                    or "Approaching news event window (caution)"
+                )
         sig_val = validate_signal_params(params)
         if not sig_val.valid:
             reasons.extend(sig_val.reasons)

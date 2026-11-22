@@ -3,7 +3,8 @@
 Phase 1 (complete): foundation. Phase 2 (complete): Market Data Engine.
 Phase 3 (complete): read-only MT5 integration (PU Prime demo connectivity).
 Phase 4 (complete): Technical Indicator Engine. Phase 5 (complete): Strategy
-Engine. Phase 6 (complete): Advanced Risk Management Engine.
+Engine. Phase 6 (complete): Advanced Risk Management Engine. Phase 7 (complete):
+News & Economic Calendar Engine.
 Subsequent phases build toward a production-ready MT5/PuPrime bot.
 Dates are targets only.
 
@@ -135,14 +136,59 @@ Dates are targets only.
 - Total: 420 tests passing (13 Phase 1 + 68 Phase 2 + 41 Phase 3 + 75 Phase 4 +
   138 Phase 5 + 85 Phase 6).
 
-## Phase 7 — News & Economic Calendar Engine
+## Phase 7 — News & Economic Calendar Engine (DONE)
 
-- `NewsEngine` ABC: upcoming events, `is_trading_allowed`,
-  `minutes_to_next_high_impact_event`.
-- Investigate legitimate economic calendar data sources and their terms of use
-  before integrating (no scraping or bypassing access restrictions).
-- Configurable trading restrictions around high-impact events (CPI, NFP, rate
-  decisions).
+- `src/news/` package: provider-independent economic-calendar & news engine.
+  Collects, normalizes and evaluates events, then communicates event-related
+  restrictions to the Phase 6 Risk Management Engine. Read-only: never places,
+  modifies or closes orders; never executes trades.
+- Base contracts (`base.py`): `CalendarProvider`, `NewsProvider`, `NewsEngineABC`.
+  Enums: `Importance`, `EventStatus`, `NewsWindowStatus`, `EventCategory`,
+  `UnavailablePolicy`.
+- Models (`models.py`): immutable `EconomicEvent`, `NewsArticle`,
+  `ImpactAssessment`, `NewsRiskContext` (with `blocks_new_entries` /
+  `is_caution` / `to_dict`). Timestamps timezone-aware UTC; unresolved times
+  flagged, never fabricated.
+- Configuration (`config.py`): configurable `NewsConfig` with per-importance
+  pre/post windows, per-category overrides, caution threshold, stale timeout,
+  unavailable policy, leakage-prevention, and currency/instrument relevance
+  rules (Forex, metals, energy, indices, crypto). Conservative degradation.
+- Categorization (`registry.py`): configurable keyword→category rules
+  (inflation, employment, central bank, growth, commodities). Importance is
+  never inferred from the event name.
+- Normalization (`normalization.py`): raw provider payloads → `EconomicEvent`;
+  missing actual/forecast/previous values stay `None`.
+- Calendar (`calendar/`): instrument↔currency mapping (`event_mapping`), impact
+  assessment (`impact`), relevant-event scheduler (`scheduler`), revision
+  merge + dedup (`revisions`), in-memory event store (`economic_events`).
+- Providers (`providers/`):
+  - `MockCalendarProvider` / `MockNewsProvider` — deterministic simulated
+    events (CPI, NFP, FOMC, rate decisions, EIA, etc.), clearly labeled
+    `is_simulated=True`.
+  - `CsvCalendarProvider` — local historical CSV with column validation.
+  - `MT5CalendarProvider` — reads MQL5-exported JSON/CSV (the MQL5
+    `CalendarValueHistory` functions are MQL5-only, not in the Python
+    `MetaTrader5` package). Converts **trading-server time → UTC only when a
+    verified `server_timezone` is configured**; otherwise marks
+    `time_resolved=False` (EVENT_TIME_UNCERTAIN). DST-aware via `tzdata`.
+  - `ApiCalendarProvider` / `RssNewsProvider` — interfaces for licensed/permitted
+    sources (no network/scraping in tests; credentials via env vars only).
+- Filters (`filters/`): relevance (`relevance`), news-window status with
+  precedence (EVENT_TIME_UNCERTAIN > NEWS_DATA_UNAVAILABLE > BLOCK_NEW_ENTRIES >
+  NEWS_CAUTION > NEWS_CLEAR) handling overlapping events (`news_window`), and
+  `build_news_risk_context` (`restriction`).
+- Persistence (`persistence/`): `EventRepository` (dedup, revision merge,
+  time-range & unresolved queries) and `EventHistory` (revision timeline).
+- Service (`service.py`): `NewsService` orchestrates providers → repository →
+  `risk_context(instrument)`. Tracks freshness/staleness; `events_as_of()`
+  prevents future-information leakage in historical contexts.
+- Risk integration: `RiskEngine.evaluate_signal` gained a backward-compatible
+  optional `news_context` parameter. When provided, blocking/uncertain/
+  unavailable contexts reject new entries; caution adds a warning. When `None`
+  (default) no news gate applies (all prior behavior unchanged).
+- Dependencies: `tzdata` (Windows) for IANA timezone data (MQL5 server-tz→UTC).
+- Total: 499 tests passing (13 Phase 1 + 68 Phase 2 + 41 Phase 3 + 75 Phase 4 +
+  138 Phase 5 + 85 Phase 6 + 79 Phase 7).
 
 ## Phase 8 — Backtesting Engine
 

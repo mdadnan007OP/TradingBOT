@@ -1,4 +1,4 @@
-# Forex Trading Bot — Phase 1, 2, 3, 4, 5 & 6
+# Forex Trading Bot — Phase 1, 2, 3, 4, 5, 6 & 7
 
 Professional, modular foundation for an automated Forex trading system intended
 to connect to MetaTrader 5 (MT5) and the PuPrime broker account. Phase 1
@@ -12,8 +12,11 @@ Engine** (trend, momentum, volatility, volume, levels). Phase 5 adds a
 (LONG / SHORT / NONE) from multiple independent strategies. Phase 6 adds an
 **Advanced Risk Management Engine** that validates every proposed trade signal,
 calculates risk-adjusted position volume, enforces account- and portfolio-level
-protections, and produces explainable risk decisions. **No real orders are
-placed and live trading is disabled.**
+protections, and produces explainable risk decisions. Phase 7 adds a **News &
+Economic Calendar Engine** that collects, normalizes and evaluates economic
+events (CPI, NFP, FOMC, rate decisions, etc.) and communicates event-related
+restrictions to the risk engine via an optional, backward-compatible news
+context. **No real orders are placed and live trading is disabled.**
 
 > **Disclaimer:** This software is for educational and development purposes. It
 > does not guarantee profits, and automated trading carries substantial risk of
@@ -80,6 +83,14 @@ forex-trading-bot/
 │       ├── validator.py, position_sizing.py, stop_loss.py, take_profit.py
 │       ├── exposure.py, portfolio_risk.py, drawdown.py, correlation.py
 │       ├── margin.py, circuit_breaker.py, risk_report.py, persistence.py
+│   ├── news/               # Phase 7: News & Economic Calendar Engine
+│   │   ├── __init__.py, base.py, models.py, config.py, registry.py
+│   │   ├── normalization.py, service.py
+│   │   ├── calendar/       # event_mapping, impact, scheduler, revisions, economic_events
+│   │   ├── providers/      # mock, csv, mt5_calendar, api, rss
+│   │   ├── filters/        # relevance, news_window, restriction
+│   │   ├── persistence/    # repository, event_history
+│   │   └── risk_integration/  # news_risk_context adapter
 │   └── market_data/        # Phase 2/3: Market Data Engine
 │       ├── __init__.py
 │       ├── base.py         # MarketDataProvider ABC
@@ -100,15 +111,20 @@ forex-trading-bot/
 │   │   └── test_mt5_adapter.py  # Phase 3 tests (mocked MT5)
 │   ├── indicators/          # Phase 4 tests
 │   ├── strategies/          # Phase 5 tests
-│   └── risk_management/     # Phase 6 tests
+│   ├── risk_management/     # Phase 6 tests
+│   │   ├── conftest.py
+│   │   ├── test_position_sizing.py
+│   │   ├── test_stop_loss_take_profit.py
+│   │   ├── test_daily_drawdown.py
+│   │   ├── test_portfolio_margin_cb.py
+│   │   ├── test_validator.py
+│   │   ├── test_service.py
+│   │   └── test_risk_report.py
+│   └── news/                # Phase 7 tests
 │       ├── conftest.py
-│       ├── test_position_sizing.py
-│       ├── test_stop_loss_take_profit.py
-│       ├── test_daily_drawdown.py
-│       ├── test_portfolio_margin_cb.py
-│       ├── test_validator.py
-│       ├── test_service.py
-│       └── test_risk_report.py
+│       ├── test_models.py, test_normalization.py, test_providers.py
+│       ├── test_calendar.py, test_filters.py, test_persistence.py
+│       ├── test_service.py, test_risk_integration.py
 └ docs/
     ├── ARCHITECTURE.md     # Module communication & design
     ├── ROADMAP.md          # Phase-by-phase development plan
@@ -357,7 +373,7 @@ See `docs/RISK_AND_SAFETY.md` for the full safety policy.
 - MT5 provider integrated with the Phase 2 Market Data Engine (`DataSource.LIVE`)
 - Safe connection diagnostics script (`python -m src.diagnostics.mt5_diagnostics`)
 - Mocked unit tests (41 Phase 3 tests) with graceful handling when MT5 is not installed
-- Total: 420 tests passing (13 Phase 1 + 68 Phase 2 + 41 Phase 3 + 75 Phase 4 + 138 Phase 5 + 85 Phase 6).
+- Total: 499 tests passing (13 Phase 1 + 68 Phase 2 + 41 Phase 3 + 75 Phase 4 + 138 Phase 5 + 85 Phase 6 + 79 Phase 7).
 
 ### Phase 4 — Technical Indicator Engine
 - `src/indicators/` package: `Indicator` ABC, `IndicatorParameters`, `IndicatorResult`, `ReadinessStatus`.
@@ -441,11 +457,41 @@ See `docs/RISK_AND_SAFETY.md` for the full safety policy.
 - Completely separate from order execution: no `place_order`/`close_order`/
   `order_send`/`order_check` calls; read-only account & position data only.
 
-## What remains (Phase 5+)
+### Phase 7 — News & Economic Calendar Engine (DONE)
 
-See `docs/ROADMAP.md`. Highlights:
+- `src/news/` package: provider-independent economic-calendar & news engine.
+- Base contracts (`CalendarProvider`, `NewsProvider`, `NewsEngineABC`) and enums
+  (`Importance`, `EventStatus`, `NewsWindowStatus`, `EventCategory`,
+  `UnavailablePolicy`).
+- Immutable models: `EconomicEvent`, `NewsArticle`, `ImpactAssessment`,
+  `NewsRiskContext` (UTC timestamps; unresolved-time flagged, never fabricated).
+- Configurable `NewsConfig` with per-importance pre/post windows, per-category
+  overrides, caution threshold, stale timeout, unavailable policy, and
+  currency/instrument relevance rules (Forex, metals, energy, indices, crypto).
+- Categorization registry (inflation, employment, central bank, growth,
+  commodities); importance is never inferred from the event name.
+- Providers: deterministic mock (simulated CPI/NFP/FOMC/rate/EIA events), CSV
+  historical loader, **MQL5-export bridge** (server-tz → UTC only when a
+  verified timezone is configured, else EVENT_TIME_UNCERTAIN), and licensed
+  API/RSS interfaces (no network/scraping in tests).
+- Filters: relevance filtering, consolidated news-window status
+  (`EVENT_TIME_UNCERTAIN > NEWS_DATA_UNAVAILABLE > BLOCK_NEW_ENTRIES >
+  NEWS_CAUTION > NEWS_CLEAR`) with overlapping-event handling.
+- Persistence: `EventRepository` (dedup, revision merge, range/unresolved
+  queries) and `EventHistory` (revision timeline).
+- `NewsService` orchestrator with freshness/staleness tracking and
+  leakage-safe `events_as_of()` for historical contexts.
+- Backward-compatible risk integration: `RiskEngine.evaluate_signal(...,
+  news_context=None)`. Blocking/uncertain/unavailable contexts reject new
+  entries; caution adds a warning; `None` keeps all prior behavior.
+- Dependency: `tzdata` (Windows) for IANA timezone data (MQL5 server-tz → UTC).
+- Total: 499 tests passing (13 + 68 + 41 + 75 + 138 + 85 + 79 Phase 7).
 
-- Risk management engine (position sizing, SL/TP, daily loss limits)
+## What remains
+
+See `docs/ROADMAP.md`. Phases 1–7 are complete; subsequent phases cover
+backtesting (8), paper/demo trading (9), monitoring/reporting (10), and
+live trading (11, only after extensive demo/paper validation).
 
 
 ## Known limitations (Phase 3)

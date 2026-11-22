@@ -154,7 +154,37 @@ on proposed trade signals. The following restrictions apply:
 - `ENABLE_LIVE_TRADING` remains `False`; `live_locked` stays active.
 - No live trading, no automatic account switching, no broker credentials stored.
 
-## 15. Escalation
+## 15. Phase 7 — News & Economic Calendar Engine Safety
+
+Phase 7 is a **news/risk-information-only** phase. It collects, normalizes and
+evaluates economic-calendar events and news, and communicates event-related
+restrictions to the Phase 6 risk engine. The following restrictions apply:
+
+- No `place_order`, `close_order`, `order_send`, or `order_check` calls — ever.
+- No order placement, modification, or closing; no trade execution.
+- No live trading, no automatic account switching, no broker credentials stored.
+- News is passed to the risk engine as an **optional** `NewsRiskContext`; when
+  absent (`None`), no news gate applies and all prior behavior is unchanged.
+- Blocking/uncertain/unavailable news windows (`BLOCK_NEW_ENTRIES`,
+  `EVENT_TIME_UNCERTAIN`, `NEWS_DATA_UNAVAILABLE`) reject new entries per the
+  configured unavailable policy; `NEWS_CAUTION` only warns.
+- Importance is **never** inferred from an event name; it comes from provider
+  data (or is `UNKNOWN`).
+- Missing actual/forecast/previous values and unresolved event times are never
+  fabricated; unresolved times are flagged (EVENT_TIME_UNCERTAIN), not guessed.
+- MQL5 economic-calendar timestamps use **trading-server time**; they are
+  converted to UTC only when a verified server timezone is configured
+  (DST-aware via `tzdata`). Otherwise the time is treated as unresolved.
+- Historical/backtest queries are leakage-safe: future information is not used.
+- Simulated providers are explicitly labeled `is_simulated=True` and never
+  presented as genuine data.
+- Economic-calendar/news data comes only from legitimate sources whose terms of
+  use are reviewed; no scraping or bypassing access restrictions. External
+  API/RSS providers are interfaces only; credentials are read from environment
+  variables, never committed.
+- `ENABLE_LIVE_TRADING` remains `False`; `live_locked` stays active.
+
+## 16. Escalation
 
 If any of these rules conflicts with a planned feature, pause implementation
 and review before proceeding.

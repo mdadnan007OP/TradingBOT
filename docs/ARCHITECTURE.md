@@ -627,10 +627,78 @@ Phase 5 Signal (RiskInterfaceSignal)
 - Circuit-breaker lockouts persist across restarts and require explicit
   authorized reset.
 
-## Extending to Phase 7 (Trade Execution)
+## Phase 7 — News & Economic Calendar Engine
 
-1. Consume `RiskDecision` from `RiskEngine.evaluate_signal()`.
+### Overview
+
+Phase 7 is a **news/risk-information-only** engine. It collects, normalizes and
+evaluates economic-calendar events and news, and communicates event-related
+restrictions to the Phase 6 Risk Management Engine. It never places, modifies
+or closes orders and never executes trades. Importance is never inferred from an
+event name, and missing values/times are never fabricated.
+
+### Module overview
+
+| Module | File | Responsibility |
+|--------|------|----------------|
+| Base | `src/news/base.py` | `CalendarProvider`, `NewsProvider`, `NewsEngineABC`; enums `Importance`, `EventStatus`, `NewsWindowStatus`, `EventCategory`, `UnavailablePolicy` |
+| Models | `src/news/models.py` | `EconomicEvent`, `NewsArticle`, `ImpactAssessment`, `NewsRiskContext` (immutable; UTC timestamps; unresolved-time flag) |
+| Config | `src/news/config.py` | `NewsConfig` — per-importance pre/post windows, category overrides, caution threshold, stale timeout, unavailable policy, leakage prevention, currency/instrument relevance rules |
+| Registry | `src/news/registry.py` | Keyword→category rules (`CategoryRegistry`) for inflation/employment/central-bank/growth/commodities |
+| Normalization | `src/news/normalization.py` | Raw provider payload → `EconomicEvent` (missing values stay `None`) |
+| Calendar | `src/news/calendar/{event_mapping,impact,scheduler,revisions,economic_events}.py` | Instrument↔currency relevance, impact assessment, relevant-event scheduling, revision merge + dedup, in-memory store |
+| Providers | `src/news/providers/{mock,csv,mt5_calendar,api,rss}_provider.py` | Deterministic mock, historical CSV, MQL5-export bridge (server-tz→UTC), licensed API & permitted RSS interfaces |
+| Filters | `src/news/filters/{relevance,news_window,restriction}.py` | Relevance filtering, consolidated window status (precedence), `build_news_risk_context` |
+| Persistence | `src/news/persistence/{repository,event_history}.py` | Dedup, revision merge, range/unresolved queries, revision timeline |
+| Risk integration | `src/news/risk_integration/news_risk_context.py` | Summarize `NewsRiskContext` for the risk engine / operators |
+| Service | `src/news/service.py` | `NewsService` — provider collection, storage, freshness/staleness, `risk_context()`, leakage-safe `events_as_of()` |
+
+### Data flow (Phase 7)
+
+```
+Provider.get_events(start, end) -> normalize_event -> EventRepository (dedup/merge)
+  -> NewsService.risk_context(instrument)
+       ├─ filter relevant events (relevance.py)
+       ├─ compute_news_window_status (news_window.py)
+       └─ build_news_risk_context (restriction.py) -> NewsRiskContext
+  -> RiskEngine.evaluate_signal(..., news_context=ctx)   # optional, backward-compatible
+       ├─ BLOCK_NEW_ENTRIES / EVENT_TIME_UNCERTAIN / NEWS_DATA_UNAVAILABLE -> REJECTED
+       ├─ NEWS_CAUTION -> warning only
+       └─ NEWS_CLEAR / None -> no news gate
+```
+
+### Timezone handling
+
+MQL5 economic-calendar timestamps use **trading-server time**, not UTC.
+`MT5CalendarProvider` converts server time → UTC **only** when a verified
+`server_timezone` is configured (DST-aware via the IANA `tzdata` package). When
+the server timezone cannot be verified, `time_resolved` is `False` and the event
+is treated as EVENT_TIME_UNCERTAIN — never as a precise window.
+
+### Design
+
+- **Backward-compatible**: `RiskEngine.evaluate_signal(..., news_context=None)`
+  keeps all prior behavior; the news gate only applies when a context is passed.
+- **Leakage-safe**: `NewsService.events_as_of(as_of, ...)` excludes events whose
+  information did not yet exist (future retrieval/publication) for backtests.
+- **No fabrication**: missing actual/forecast/previous values and unresolved
+  times are preserved as `None`/flags, never guessed.
+- **Read-only**: no order placement/modification/closing; no live trading; no
+  scraping; credentials via environment variables only.
+
+### Safety boundaries (Phase 7)
+
+- Never places, modifies or closes orders; never executes trades.
+- No account switching, no live login, no broker password storage.
+- Simulated providers are labeled `is_simulated=True` and never presented as
+  genuine data.
+- External API/RSS providers are interfaces only; no network access in tests.
+
+## Extending to later phases (execution / backtesting)
+
+1. Consume `RiskDecision` from `RiskEngine.evaluate_signal()` (optionally with a
+   Phase 7 `NewsRiskContext`).
 2. Only act on `RISK_APPROVED` (still hypothetical — confirmation required).
 3. Route through `TradeExecutionEngine` with `live_locked` gate.
-4. Keep risk and execution in separate modules; execution imports risk, not
-   vice versa.
+4. Keep risk, news, and execution in separate modules; execution imports risk,
+   not vice versa.
