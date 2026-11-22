@@ -504,3 +504,133 @@ Every signal includes:
 - Explanation string
 - Technical invalidation level (NOT a stop-loss)
 - Expiry conditions
+
+## Phase 6 — Advanced Risk Management Engine
+
+### Overview
+
+Phase 6 is a **risk-evaluation-only** engine. It consumes Phase 5 `Signal` /
+`RiskInterfaceSignal` proposals and produces structured `RiskDecision` objects.
+It never places, modifies, or closes orders. A `RISK_APPROVED` decision means
+the hypothetical proposal passed all configured risk checks — it does **not**
+authorize execution.
+
+### Module overview
+
+| Module | File | Responsibility |
+|--------|------|----------------|
+| Base | `src/risk_management/base.py` | Enums, `RiskParameters`, `RiskDecision`, `AccountSnapshot`, `PositionExposure`, `CircuitBreakerState`, `RiskEngineABC` |
+| Models | `src/risk_management/models.py` | `DrawdownState`, `DailyPnLState`, `ExposureSummary`, `CorrelationResult`, `RiskReport` |
+| Config | `src/risk_management/config.py` | `RiskPolicy` (validated), `InstrumentGroup`, `AssetClass`, deterministic `test_policy()` |
+| Service | `src/risk_management/service.py` | `RiskEngine` — full evaluation pipeline + report building |
+| Validator | `src/risk_management/validator.py` | Signal/account/instrument/policy pre-validation |
+| Position sizing | `src/risk_management/position_sizing.py` | Instrument-aware volume (round DOWN to lot step), risk-per-lot, currency conversion |
+| Stop-loss | `src/risk_management/stop_loss.py` | Stop validation (side, distance, limits), `calculate_stop_price` |
+| Take-profit | `src/risk_management/take_profit.py` | TP validation (side, R:R), target derivation |
+| Exposure | `src/risk_management/exposure.py` | Per-position and aggregated portfolio exposure |
+| Portfolio risk | `src/risk_management/portfolio_risk.py` | Max positions, portfolio risk, instrument/asset-class/directional limits |
+| Drawdown | `src/risk_management/drawdown.py` | High-watermark tracking, drawdown %, persisted state |
+| Correlation | `src/risk_management/correlation.py` | Pearson correlation, configurable window/threshold |
+| Margin | `src/risk_management/margin.py` | Required vs free margin, margin-usage limits |
+| Circuit breaker | `src/risk_management/circuit_breaker.py` | Lockouts, audit history, trigger timestamp, authorized reset |
+| Risk report | `src/risk_management/risk_report.py` | Decision/report serialization + text formatting |
+| Persistence | `src/risk_management/persistence.py` | Atomic save/load of breaker, drawdown, daily PnL state |
+
+### Data flow (Phase 6)
+
+```
+Phase 5 Signal (RiskInterfaceSignal)
+  └─> RiskEngine.evaluate_signal()
+        ├─ 1. Signal validation        (validator.py)
+        ├─ 2. Account & instrument info (validator.py)
+        ├─ 3. Stop-loss validation     (stop_loss.py)
+        ├─ 4. Position sizing          (position_sizing.py)
+        ├─ 5. Take-profit validation   (take_profit.py)
+        ├─ 6. Portfolio exposure       (portfolio_risk.py)
+        ├─ 7. Daily loss & drawdown    (drawdown.py)
+        ├─ 8. Margin & spread          (margin.py)
+        ├─ 9. Central risk decision    (service.py)
+        └─ 10. Risk report             (risk_report.py)
+  └─> RiskDecision (RISK_APPROVED | RISK_REJECTED | REQUIRES_INFORMATION |
+      RISK_LOCKED | CALCULATION_UNAVAILABLE)
+```
+
+### Design
+
+- **Decimal arithmetic** throughout; no floating-point drift.
+- **Instrument-aware**: Forex, metals, energy, indices supported via broker
+  volume min/max/step, contract size, tick value, and account-currency
+  conversion. Missing essential specs are never guessed — rejected with a clear
+  explanation.
+- **Volume rounded DOWN** to the lot step; never rounded up beyond the risk
+  budget. Volume below broker minimum → rejected.
+- **Stop-loss**: LONG below entry / SHORT above entry; positive distance;
+  min/max distance and %-of-entry limits; technical-invalidation / ATR /
+  swing / fixed methods. A technical invalidation level is never silently moved
+  to force an acceptable size.
+- **Take-profit**: reward-to-risk / ATR / technical targets; minimum R:R
+  enforced; LONG above entry / SHORT below entry.
+- **Daily loss**: starting-reference equity/balance, realized + unrealized PnL,
+  deposits/withdrawals excluded from PnL, configurable limit + lockout.
+- **Drawdown**: equity & balance high-watermarks persisted to disk so a restart
+  cannot reset protection limits; fail-safe if state unavailable.
+- **Portfolio exposure**: max positions, portfolio risk, per-instrument and
+  per-asset-class limits, directional exposure.
+- **Correlation**: Pearson correlation with configurable window/threshold;
+  insufficient data does not trigger rejection unless policy requires it.
+- **Margin**: required vs free margin, projected margin-usage limit, leverage.
+- **Circuit breakers**: audit history, trigger timestamp, lockout-until, explicit
+  authorized reset — not auto-cleared on restart.
+- **Decision statuses**: `RISK_APPROVED`, `RISK_REJECTED`,
+  `REQUIRES_INFORMATION`, `RISK_LOCKED`, `CALCULATION_UNAVAILABLE`.
+- **Execution boundary**: zero imports of order-execution functions;
+  `place_order`/`close_order`/`order_send`/`order_check` are never called.
+  Account/position data is read-only.
+
+### Inter-module dependencies
+
+- `src/risk_management/base.py` — depends on `src/market_data/models.py`
+  (InstrumentSpec) only.
+- `src/risk_management/config.py` — depends on `base.py`.
+- `src/risk_management/validator.py` — depends on `base.py`, `config.py`,
+  `market_data/models.py`.
+- `src/risk_management/position_sizing.py` — depends on `base.py`, `config.py`,
+  `market_data/models.py`.
+- `src/risk_management/stop_loss.py` — depends on `base.py`, `config.py`,
+  `position_sizing.py`.
+- `src/risk_management/take_profit.py` — depends on `base.py`, `config.py`.
+- `src/risk_management/exposure.py` — depends on `src/models.py` (Position),
+  `models.py` (PositionExposure).
+- `src/risk_management/portfolio_risk.py` — depends on `config.py`, `models.py`,
+  `exposure.py`.
+- `src/risk_management/drawdown.py` — depends on `models.py` (DrawdownState).
+- `src/risk_management/correlation.py` — depends on `config.py`, `models.py`.
+- `src/risk_management/margin.py` — depends on `base.py` (MarginSnapshot),
+  `config.py`.
+- `src/risk_management/circuit_breaker.py` — depends on `base.py`.
+- `src/risk_management/service.py` — depends on all risk_management modules +
+  `src/models.py`, `src/market_data/models.py`.
+- `src/risk_management/risk_report.py` — depends on `base.py`, `models.py`.
+- `src/risk_management/persistence.py` — depends on `base.py`, `models.py`.
+
+### Safety boundaries
+
+- No order placement, modification, or closing — ever.
+- No `order_send` / `order_check` calls.
+- No automatic liquidation or position closing.
+- No live trading; `live_locked` remains active.
+- No broker passwords or credentials stored.
+- No automatic account switching.
+- Risk-approved proposals are NOT executed during Phase 6.
+- Missing account/position/spec data fails safely (REQUIRES_INFORMATION or
+  CALCULATION_UNAVAILABLE), never silently treated as zero.
+- Circuit-breaker lockouts persist across restarts and require explicit
+  authorized reset.
+
+## Extending to Phase 7 (Trade Execution)
+
+1. Consume `RiskDecision` from `RiskEngine.evaluate_signal()`.
+2. Only act on `RISK_APPROVED` (still hypothetical — confirmation required).
+3. Route through `TradeExecutionEngine` with `live_locked` gate.
+4. Keep risk and execution in separate modules; execution imports risk, not
+   vice versa.

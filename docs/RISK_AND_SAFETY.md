@@ -115,7 +115,46 @@ Phase 5 is a signal-generation phase only. The following restrictions apply:
 - One failed strategy does not crash the system (fault isolation).
 - Errors are logged; they are never silently suppressed.
 
-## 14. Escalation
+## 14. Phase 6 — Risk Management Engine Safety
+
+Phase 6 is a risk-evaluation-only phase. It calculates, validates, and reports
+on proposed trade signals. The following restrictions apply:
+
+- No `place_order`, `close_order`, `order_send`, or `order_check` calls — ever.
+- No order placement, modification, or closing of any kind.
+- No automatic liquidation or position closing.
+- A `RISK_APPROVED` decision is hypothetical only — it passed configured risk
+  checks but does **not** authorize execution. Phase 6 does not execute
+  risk-approved proposals.
+- Position sizing uses Decimal arithmetic; volume is rounded **DOWN** to the
+  broker lot step and is never rounded up beyond the configured monetary risk
+  budget. Volume below the broker minimum lot → rejected.
+- Missing essential instrument specifications (contract size, tick value,
+  account-currency conversion rate) are never guessed — rejected with a clear
+  explanation.
+- Stop-loss: LONG below entry / SHORT above entry; positive distance; min/max
+  distance and %-of-entry limits enforced. A technical invalidation level is
+  never silently moved to force an acceptable position size.
+- Take-profit: LONG above entry / SHORT below entry; minimum reward-to-risk
+  enforced.
+- Daily loss: starting-reference equity/balance; deposits/withdrawals are
+  excluded from PnL (they are not profit/loss); missing account info is never
+  treated as zero losses.
+- Drawdown: equity & balance high-watermarks are persisted to disk so a restart
+  cannot reset protection limits; unavailable state fails safely.
+- Circuit breakers: lockouts have trigger timestamps and lockout-until; they
+  persist across restarts and require an explicit authorized reset — never
+  auto-cleared.
+- Portfolio exposure: max positions, portfolio risk, per-instrument and
+  per-asset-class limits, directional exposure enforced.
+- Correlation: Pearson correlation with configurable window/threshold;
+  insufficient data does not cause rejection unless policy requires it.
+- Margin: required vs free margin and margin-usage limits enforced; missing
+  leverage/specs fail safely rather than inventing values.
+- `ENABLE_LIVE_TRADING` remains `False`; `live_locked` stays active.
+- No live trading, no automatic account switching, no broker credentials stored.
+
+## 15. Escalation
 
 If any of these rules conflicts with a planned feature, pause implementation
 and review before proceeding.

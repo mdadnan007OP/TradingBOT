@@ -2,6 +2,8 @@
 
 Phase 1 (complete): foundation. Phase 2 (complete): Market Data Engine.
 Phase 3 (complete): read-only MT5 integration (PU Prime demo connectivity).
+Phase 4 (complete): Technical Indicator Engine. Phase 5 (complete): Strategy
+Engine. Phase 6 (complete): Advanced Risk Management Engine.
 Subsequent phases build toward a production-ready MT5/PuPrime bot.
 Dates are targets only.
 
@@ -95,13 +97,43 @@ Dates are targets only.
   risk integration interface, look-ahead prevention verified.
 - Total: 335 tests passing (13 Phase 1 + 68 Phase 2 + 41 Phase 3 + 75 Phase 4 + 138 Phase 5).
 
-## Phase 6 — Risk Management Engine
+## Phase 6 — Advanced Risk Management Engine (DONE)
 
-- `RiskManager` ABC: `validate`, `compute_position_size`,
-  `daily_loss_limit_reached`, `max_positions_reached`.
-- Position sizing (% equity per trade), stop-loss/take-profit calculation.
-- Daily loss limit, max concurrent positions, max exposure per symbol.
-- Centralized risk interface used by `TradeExecutionEngine`.
+- `src/risk_management/` package: centralized, execution-independent risk engine.
+- `RiskEngine` service implementing the full evaluation pipeline:
+  signal validation → account & instrument info → stop-loss validation →
+  position sizing → take-profit validation → portfolio exposure → daily loss
+  & drawdown → margin & spread → central risk decision → risk report.
+- `RiskDecision` with standardized statuses: `RISK_APPROVED`,
+  `RISK_REJECTED`, `REQUIRES_INFORMATION`, `RISK_LOCKED`,
+  `CALCULATION_UNAVAILABLE`. Approval is hypothetical only — never authorizes
+  execution.
+- Instrument-aware position sizing (Decimal arithmetic; volume rounded DOWN to
+  lot step; never rounded up beyond risk budget; rejects below broker min lot;
+  never guesses missing tick values / contract specs / conversion rates).
+- Forex, precious metals, energy, indices support with broker volume min/max/
+  step and account-currency conversion.
+- Stop-loss validation: LONG below entry / SHORT above entry, positive distance,
+  min/max distance limits, technical-invalidation / ATR / swing / fixed methods.
+- Take-profit validation: reward-to-risk, ATR-based, technical targets; minimum
+  R:R enforced.
+- Daily loss protection (starting reference, realized/unrealized PnL, deposits/
+  withdrawals excluded from PnL, configurable limit, lockout).
+- Drawdown tracking with persisted equity/balance high-watermarks (survives
+  restart; cannot be accidentally reset).
+- Portfolio exposure: max positions, portfolio risk, per-instrument and
+  per-asset-class limits, directional exposure.
+- Correlation-aware exposure (Pearson correlation, configurable window/threshold,
+  insufficient-data safe handling).
+- Margin validation (required vs free margin, margin-usage limits, leverage).
+- Circuit breakers with audit history, trigger timestamps, lockout-until, and
+  explicit authorized reset (not auto-cleared on restart).
+- Deterministic test configurations; all calculations independently unit-tested
+  against hand-computed reference values.
+- Completely separate from order execution: no `place_order`/`close_order`/
+  `order_send`/`order_check` calls; read-only account & position data only.
+- Total: 420 tests passing (13 Phase 1 + 68 Phase 2 + 41 Phase 3 + 75 Phase 4 +
+  138 Phase 5 + 85 Phase 6).
 
 ## Phase 7 — News & Economic Calendar Engine
 

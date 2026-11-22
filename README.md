@@ -1,4 +1,4 @@
-# Forex Trading Bot — Phase 1, 2, 3, 4 & 5
+# Forex Trading Bot — Phase 1, 2, 3, 4, 5 & 6
 
 Professional, modular foundation for an automated Forex trading system intended
 to connect to MetaTrader 5 (MT5) and the PuPrime broker account. Phase 1
@@ -9,8 +9,11 @@ for PU Prime **demo** connectivity (broker quotes and historical candles fed
 into the Phase 2 Market Data Engine). Phase 4 adds a **Technical Indicator
 Engine** (trend, momentum, volatility, volume, levels). Phase 5 adds a
 **Multi-Strategy Engine** that generates standardized trading signals
-(LONG / SHORT / NONE) from multiple independent strategies. **No real orders
-are placed and live trading is disabled.**
+(LONG / SHORT / NONE) from multiple independent strategies. Phase 6 adds an
+**Advanced Risk Management Engine** that validates every proposed trade signal,
+calculates risk-adjusted position volume, enforces account- and portfolio-level
+protections, and produces explainable risk decisions. **No real orders are
+placed and live trading is disabled.**
 
 > **Disclaimer:** This software is for educational and development purposes. It
 > does not guarantee profits, and automated trading carries substantial risk of
@@ -48,7 +51,7 @@ forex-trading-bot/
 │   ├── config.py           # Centralized configuration + env loading
 │   ├── logging_config.py   # Logging setup (console + rotating file)
 │   ├── models.py           # Data models (tick, candle, order, position, account)
-│   ├── engines.py          # Abstract interfaces for all 10 engine modules
+│   ├── engines.py          # Abstract interfaces for all engine modules
 │   ├── execution.py        # Trade execution engine (Phase 1 skeleton)
 │   ├── main.py             # Application entry point
 │   ├── broker/             # Phase 1/3: Broker integration package
@@ -64,6 +67,19 @@ forex-trading-bot/
 │   ├── diagnostics/        # Phase 3: Diagnostics
 │   │   ├── __init__.py
 │   │   └── mt5_diagnostics.py       # Read-only connection diagnostic script
+│   ├── indicators/         # Phase 4: Technical Indicator Engine
+│   │   ├── __init__.py, base.py, registry.py, calculator.py, service.py
+│   │   ├── trend/          # SMA, EMA, ADX, Ichimoku Cloud
+│   │   ├── momentum/       # RSI, MACD, Stochastic, CCI, Williams %R
+│   │   ├── volatility/     # ATR, Bollinger Bands
+│   │   └── levels/         # Classic Pivot Points
+│   │   └── volume/         # VWAP
+│   ├── strategies/         # Phase 5: Multi-Strategy Engine
+│   └── risk_management/    # Phase 6: Advanced Risk Management Engine
+│       ├── __init__.py, base.py, models.py, config.py, service.py
+│       ├── validator.py, position_sizing.py, stop_loss.py, take_profit.py
+│       ├── exposure.py, portfolio_risk.py, drawdown.py, correlation.py
+│       ├── margin.py, circuit_breaker.py, risk_report.py, persistence.py
 │   └── market_data/        # Phase 2/3: Market Data Engine
 │       ├── __init__.py
 │       ├── base.py         # MarketDataProvider ABC
@@ -80,8 +96,19 @@ forex-trading-bot/
 │   ├── test_foundation.py   # Phase 1 tests
 │   ├── market_data/
 │   │   └── test_market_data.py  # Phase 2 tests
-│   └── broker/
-│       └── test_mt5_adapter.py  # Phase 3 tests (mocked MT5)
+│   ├── broker/
+│   │   └── test_mt5_adapter.py  # Phase 3 tests (mocked MT5)
+│   ├── indicators/          # Phase 4 tests
+│   ├── strategies/          # Phase 5 tests
+│   └── risk_management/     # Phase 6 tests
+│       ├── conftest.py
+│       ├── test_position_sizing.py
+│       ├── test_stop_loss_take_profit.py
+│       ├── test_daily_drawdown.py
+│       ├── test_portfolio_margin_cb.py
+│       ├── test_validator.py
+│       ├── test_service.py
+│       └── test_risk_report.py
 └ docs/
     ├── ARCHITECTURE.md     # Module communication & design
     ├── ROADMAP.md          # Phase-by-phase development plan
@@ -330,7 +357,7 @@ See `docs/RISK_AND_SAFETY.md` for the full safety policy.
 - MT5 provider integrated with the Phase 2 Market Data Engine (`DataSource.LIVE`)
 - Safe connection diagnostics script (`python -m src.diagnostics.mt5_diagnostics`)
 - Mocked unit tests (41 Phase 3 tests) with graceful handling when MT5 is not installed
-- Total: 335 tests passing (13 Phase 1 + 68 Phase 2 + 41 Phase 3 + 75 Phase 4 + 138 Phase 5).
+- Total: 420 tests passing (13 Phase 1 + 68 Phase 2 + 41 Phase 3 + 75 Phase 4 + 138 Phase 5 + 85 Phase 6).
 
 ### Phase 4 — Technical Indicator Engine
 - `src/indicators/` package: `Indicator` ABC, `IndicatorParameters`, `IndicatorResult`, `ReadinessStatus`.
@@ -378,11 +405,48 @@ See `docs/RISK_AND_SAFETY.md` for the full safety policy.
   versioning, explainability, stale data, invalid indicators, risk interface,
   look-ahead prevention.
 
+### Phase 6 — Advanced Risk Management Engine (DONE)
+
+- `src/risk_management/` package: centralized, execution-independent risk engine.
+- `RiskEngine` service implementing the full evaluation pipeline:
+  signal validation → account & instrument info → stop-loss validation →
+  position sizing → take-profit validation → portfolio exposure → daily loss
+  & drawdown → margin & spread → central risk decision → risk report.
+- `RiskDecision` with standardized statuses:
+  `RISK_APPROVED`, `RISK_REJECTED`, `REQUIRES_INFORMATION`, `RISK_LOCKED`,
+  `CALCULATION_UNAVAILABLE`. Approval is hypothetical only — never authorizes
+  execution.
+- Instrument-aware position sizing (Decimal arithmetic; volume rounded DOWN to
+  lot step; never rounded up beyond risk budget; rejects below broker min lot;
+  never guesses missing tick values / contract specs / conversion rates).
+- Forex, precious metals, energy, indices support with broker volume min/max/
+  step and account-currency conversion.
+- Stop-loss validation: LONG below entry / SHORT above entry, positive distance,
+  min/max distance limits, technical-invalidation / ATR / swing / fixed methods.
+- Take-profit validation: reward-to-risk, ATR-based, technical targets; minimum
+  R:R enforced.
+- Daily loss protection (starting reference, realized/unrealized PnL, deposits/
+  withdrawals excluded from PnL, configurable limit, lockout).
+- Drawdown tracking with persisted equity/balance high-watermarks (survives
+  restart; cannot be accidentally reset).
+- Portfolio exposure: max positions, portfolio risk, per-instrument and
+  per-asset-class limits, directional exposure.
+- Correlation-aware exposure (Pearson correlation, configurable window/threshold,
+  insufficient-data safe handling).
+- Margin validation (required vs free margin, margin-usage limits, leverage).
+- Circuit breakers with audit history, trigger timestamps, lockout-until, and
+  explicit authorized reset (not auto-cleared on restart).
+- Deterministic test configurations; all calculations independently unit-tested
+  against hand-computed reference values.
+- Completely separate from order execution: no `place_order`/`close_order`/
+  `order_send`/`order_check` calls; read-only account & position data only.
+
 ## What remains (Phase 5+)
 
 See `docs/ROADMAP.md`. Highlights:
 
 - Risk management engine (position sizing, SL/TP, daily loss limits)
+
 
 ## Known limitations (Phase 3)
 
