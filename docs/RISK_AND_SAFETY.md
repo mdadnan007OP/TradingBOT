@@ -184,7 +184,32 @@ restrictions to the Phase 6 risk engine. The following restrictions apply:
   variables, never committed.
 - `ENABLE_LIVE_TRADING` remains `False`; `live_locked` stays active.
 
-## 16. Escalation
+## 16. Phase 8 — Backtesting Engine Safety
+
+Phase 8 is a **simulation-only** phase. It replays historical data through the
+existing indicators, strategies, risk, and news engines and never places real or
+demo orders. The following restrictions apply:
+
+- No `place_order`, `close_order`, `order_send`, or `order_check` calls — ever.
+  No broker connection is made; execution is entirely internal to the simulator.
+- A backtest fill is simulated at the next bar; entries never fill at the signal
+  bar's price (no look-ahead). Indicators and strategies see only candles with
+  `ts <= now`; news uses `events_as_of(now)`.
+- Ambiguous stop-loss / take-profit hits (both levels within one bar) are resolved
+  by the configured conservative default (stop-first) and are flagged, never
+  silently assumed favorable.
+- Transaction costs (spread, slippage, commission, swap) are modeled explicitly
+  and never hidden; missing specs are not fabricated — trades may be rejected.
+- Risk checks run at simulated time (`evaluate_signal(now=ts)`), so staleness and
+  daily-loss resets reflect the bar clock, not wall-clock `datetime.now()`.
+- Invalid/incomplete input bars are flagged and labeled `DataSource.SIMULATED`;
+  missing data is preserved, never filled with fabricated prices.
+- Results are hypothetical and not predictive of future performance; small-sample
+  metrics (fewer than ~30 trades) are flagged as low-confidence.
+- `ENABLE_LIVE_TRADING` remains `False`; `live_locked` stays active.
+- No live trading, no automatic account switching, no broker credentials stored.
+
+## 17. Escalation
 
 If any of these rules conflicts with a planned feature, pause implementation
 and review before proceeding.

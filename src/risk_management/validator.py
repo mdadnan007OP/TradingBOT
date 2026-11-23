@@ -66,6 +66,7 @@ def validate_signal_params(
 def validate_account(
     account: AccountSnapshot,
     max_staleness_seconds: int,
+    reference_time: Optional[datetime] = None,
 ) -> ValidationResult:
     reasons: List[str] = []
     missing: List[str] = []
@@ -79,7 +80,7 @@ def validate_account(
     if not account.currency:
         reasons.append("Account currency is missing")
         missing.append("currency")
-    if account.is_stale(max_staleness_seconds):
+    if account.is_stale(max_staleness_seconds, reference_time=reference_time):
         reasons.append("Account snapshot is stale")
         missing.append("account_timestamp")
 

@@ -1,4 +1,4 @@
-# Forex Trading Bot — Phase 1, 2, 3, 4, 5, 6 & 7
+# Forex Trading Bot — Phase 1, 2, 3, 4, 5, 6, 7 & 8
 
 Professional, modular foundation for an automated Forex trading system intended
 to connect to MetaTrader 5 (MT5) and the PuPrime broker account. Phase 1
@@ -16,7 +16,12 @@ protections, and produces explainable risk decisions. Phase 7 adds a **News &
 Economic Calendar Engine** that collects, normalizes and evaluates economic
 events (CPI, NFP, FOMC, rate decisions, etc.) and communicates event-related
 restrictions to the risk engine via an optional, backward-compatible news
-context. **No real orders are placed and live trading is disabled.**
+context. Phase 8 adds a **Historical Backtesting & Strategy Validation Engine**:
+a deterministic, event-driven simulator that replays historical OHLC data through
+the Phase 1–7 components (indicators, strategies, risk, news) with realistic
+execution, transaction costs, performance analysis, and walk-forward /
+optimization / stress validation. **No real orders are placed and live trading is
+disabled.**
 
 > **Disclaimer:** This software is for educational and development purposes. It
 > does not guarantee profits, and automated trading carries substantial risk of
@@ -91,6 +96,18 @@ forex-trading-bot/
 │   │   ├── filters/        # relevance, news_window, restriction
 │   │   ├── persistence/    # repository, event_history
 │   │   └── risk_integration/  # news_risk_context adapter
+│   ├── backtesting/        # Phase 8: Historical Backtesting Engine
+│   │   ├── __init__.py, base.py, models.py, config.py
+│   │   ├── engine.py       # BacktestEngine orchestrator + create_engine()
+│   │   ├── market_simulator.py   # EventScheduler, Bar/BarWindow, chronological reveal
+│   │   ├── data_loader.py        # BacktestDataLoader (validate, no look-ahead)
+│   │   ├── execution_simulator.py, order_simulator.py
+│   │   ├── position_simulator.py, portfolio_simulator.py
+│   │   ├── cost_model.py, spread_model.py, slippage_model.py,
+│   │   │   commission_model.py, swap_model.py, currency_conversion.py
+│   │   ├── performance.py, metrics.py, trade_analyzer.py, drawdown_analysis.py
+│   │   ├── strategy_comparison.py, walk_forward.py, optimization.py, stress.py
+│   │   ├── reporting.py, persistence.py, demo.py
 │   └── market_data/        # Phase 2/3: Market Data Engine
 │       ├── __init__.py
 │       ├── base.py         # MarketDataProvider ABC
@@ -125,6 +142,13 @@ forex-trading-bot/
 │       ├── test_models.py, test_normalization.py, test_providers.py
 │       ├── test_calendar.py, test_filters.py, test_persistence.py
 │       ├── test_service.py, test_risk_integration.py
+│   └── backtesting/         # Phase 8 tests
+│       ├── conftest.py
+│       ├── test_engine.py, test_engine_advanced.py, test_engine_risk_state.py
+│       ├── test_costs.py, test_execution.py, test_portfolio.py
+│       ├── test_data_loader.py, test_performance.py
+│       ├── test_walk_forward.py, test_optimization.py, test_stress.py
+│       └── test_reporting.py
 └ docs/
     ├── ARCHITECTURE.md     # Module communication & design
     ├── ROADMAP.md          # Phase-by-phase development plan
@@ -487,11 +511,48 @@ See `docs/RISK_AND_SAFETY.md` for the full safety policy.
 - Dependency: `tzdata` (Windows) for IANA timezone data (MQL5 server-tz → UTC).
 - Total: 499 tests passing (13 + 68 + 41 + 75 + 138 + 85 + 79 Phase 7).
 
+### Phase 8 — Historical Backtesting & Strategy Validation Engine (DONE)
+
+- `src/backtesting/` package: a deterministic, event-driven simulator that reuses
+  Phase 1–7 components unchanged and **never** places real/demo orders (no
+  `order_send`/`order_check` calls).
+- `BacktestEngine`: per-bar lifecycle — fill pending orders → check exits →
+  generate signals via `SignalService` → news gate → `RiskEngine.evaluate_signal`
+  (at simulated time) → open position at the next bar. Look-ahead is prevented:
+  indicators/strategies see only candles `ts <= now`; entries fill the next bar.
+- `MarketSimulator`/`EventScheduler`: strict chronological reveal of `Bar`/
+  `BarWindow`, never exposing future candles.
+- `BacktestDataLoader`: validates timestamps, OHLC integrity and duplicates;
+  preserves missing data (no fabricated fills); labels invalid/incomplete bars
+  as `DataSource.SIMULATED`.
+- Execution & cost realism: `SpreadModel`, `SlippageModel` (adverse only),
+  `CommissionModel` (none/per-lot/fixed), `SwapModel` (overnight), and
+  `CurrencyConversion` (as-of rates, never future). LONG fills at ask, SHORT at
+  bid; ambiguous SL/TP resolved by a conservative default (stop-first), flagged.
+- `OrderSimulator`, `PositionSimulator`, `PortfolioSimulator`: pending → filled →
+  open → closed lifecycle; gross/net PnL, R-multiple; hedging + simplified
+  netting; equity/balance tracking; rejected-signal and risk-lockout logs.
+- Performance analysis: `PerformanceAnalyzer`, `Metrics` (Sharpe/Sortino
+  annualized by the median bar interval; warns when < 30 trades),
+  `TradeAnalyzer`, `DrawdownAnalysis` (max/avg drawdown, recovery), and
+  `StrategyComparison` across strategy subsets.
+- Validation: `WalkForward` (in-sample / out-of-sample split), `Optimization`
+  (`grid_search` + `robustness_score`/`best_candidate`), and `Stress` (spread
+  2×/5×, adverse slippage, elevated commission).
+- Reporting & persistence: `reporting.py` (JSON/CSV reports, monthly
+  performance, formatted summary) and `persistence.py` (save/load results).
+- Backward-compatible risk integration: `AccountSnapshot.is_stale(reference_time)`,
+  `validate_account(reference_time)`, and `RiskEngine.evaluate_signal(now=...)`
+  let risk checks run at simulated time instead of wall-clock `datetime.now()`.
+- Deterministic synthetic demo: `python -m src.backtesting.demo` (SMA-crossover
+  `MomentumStrategy`) writes to the git-ignored `backtest_output/` directory.
+- Total: 593 tests passing (13 + 68 + 41 + 75 + 138 + 85 + 79 + 94 Phase 8).
+
 ## What remains
 
-See `docs/ROADMAP.md`. Phases 1–7 are complete; subsequent phases cover
-backtesting (8), paper/demo trading (9), monitoring/reporting (10), and
-live trading (11, only after extensive demo/paper validation).
+See `docs/ROADMAP.md`. Phases 1–8 are complete; subsequent phases cover
+paper/demo trading (9), monitoring/reporting (10), and live trading (11, only
+after extensive demo/paper validation).
 
 
 ## Known limitations (Phase 3)

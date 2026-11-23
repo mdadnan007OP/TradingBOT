@@ -164,6 +164,7 @@ class RiskEngine(RiskEngineABC):
         params: RiskParameters,
         account: AccountSnapshot,
         news_context: Optional["NewsRiskContext"] = None,
+        now: Optional[datetime] = None,
     ) -> RiskDecision:
         """Evaluate a proposed trade signal through the full pipeline.
 
@@ -174,7 +175,12 @@ class RiskEngine(RiskEngineABC):
                 new entries may be blocked or flagged by the news gate. When
                 ``None`` (default), no news gate applies — fully backward
                 compatible with callers that do not use the news engine.
+            now: Optional evaluation time. When provided (e.g. by the backtesting
+                engine), staleness and daily-reset logic use this reference time
+                instead of wall-clock time. Defaults to wall-clock now.
         """
+        if now is None:
+            now = datetime.now(timezone.utc)
         reasons: List[str] = []
         warnings: List[str] = []
         status = RiskDecisionStatus.APPROVED
@@ -233,7 +239,8 @@ class RiskEngine(RiskEngineABC):
 
         # --- 2. Account & instrument info ---
         acc_val = validate_account(
-            account, max_staleness_seconds=policy.cooldown_minutes * 60
+            account, max_staleness_seconds=policy.cooldown_minutes * 60,
+            reference_time=now,
         )
         if not acc_val.valid:
             reasons.extend(acc_val.reasons)

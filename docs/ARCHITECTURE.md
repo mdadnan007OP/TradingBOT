@@ -694,11 +694,79 @@ is treated as EVENT_TIME_UNCERTAIN — never as a precise window.
   genuine data.
 - External API/RSS providers are interfaces only; no network access in tests.
 
-## Extending to later phases (execution / backtesting)
+## Phase 8 — Historical Backtesting & Strategy Validation Engine
 
-1. Consume `RiskDecision` from `RiskEngine.evaluate_signal()` (optionally with a
-   Phase 7 `NewsRiskContext`).
+### Overview
+
+Phase 8 is a **simulation-only** engine. It replays historical OHLC data through
+the existing Phase 4–7 components (indicators, strategies, risk, news) unchanged
+and never places, modifies or closes orders (no `order_send` / `order_check`
+calls). A `RISK_APPROVED` decision from the backtest is hypothetical only —
+execution is simulated internally and never reaches a broker.
+
+### Module overview
+
+| Module | File | Responsibility |
+|--------|------|----------------|
+| Base/models | `src/backtesting/base.py`, `models.py` | `Bar`, `BarWindow`, `OrderSide`, `OrderType`, `OrderStatus`, `ExitReason`, `PositionStatus`, `EventType`; `SimulatedOrder`, `SimulatedPosition`, `ClosedTrade`, `EquityPoint`, `BacktestEvent`, `BacktestResult`, `FillResult`, `PositionCheckResult`, `StrategyRunSummary` |
+| Config | `src/backtesting/config.py` | `BacktestConfig`, `AccountConfig`, `ExecutionConfig`, `SpreadConfig`, `SlippageConfig`, `CommissionConfig`, `SwapConfig`, `DataConfig`; enums `SlippageModel`, `CommissionModel`, `AmbiguousFillPolicy`, `PositionSizingMethod`; `default_backtest_config()`, `test_backtest_config()` |
+| Engine | `src/backtesting/engine.py` | `BacktestEngine` per-bar lifecycle; `create_engine()` (indicators), `create_strategy_manager()` (strategies) |
+| Market sim | `src/backtesting/market_simulator.py` | `EventScheduler` chronological reveal, `Bar`/`BarWindow` |
+| Data loader | `src/backtesting/data_loader.py` | `BacktestDataLoader` — validate timestamps/OHLC/dupes, preserve missing data |
+| Execution | `src/backtesting/execution_simulator.py`, `order_simulator.py` | Next-bar fills, gap-aware, ambiguous SL/TP policy, adverse slippage; pending→filled lifecycle |
+| Position/portfolio | `src/backtesting/position_simulator.py`, `portfolio_simulator.py` | Gross/net PnL, R-multiple; hedging + simplified netting; equity/balance |
+| Costs | `src/backtesting/cost_model.py` + `spread_model.py`, `slippage_model.py`, `commission_model.py`, `swap_model.py`, `currency_conversion.py` | Spread, slippage, commission, overnight swap, as-of currency conversion |
+| Performance | `src/backtesting/performance.py`, `metrics.py`, `trade_analyzer.py`, `drawdown_analysis.py`, `strategy_comparison.py` | Metrics (Sharpe/Sortino annualized by median bar interval), trade stats, drawdown, strategy comparison |
+| Validation | `src/backtesting/walk_forward.py`, `optimization.py`, `stress.py` | In/out-of-sample split, grid search + robustness, spread/slippage/commission stress |
+| Reporting | `src/backtesting/reporting.py`, `persistence.py`, `demo.py` | JSON/CSV reports, save/load, deterministic synthetic demo |
+
+### Data flow (Phase 8)
+
+```
+BacktestEngine.run():
+  for each bar (chronological reveal, ts <= now):
+    1. fill pending orders (next-bar, gap-aware)        [execution_simulator]
+    2. check exits (SL/TP/ambiguous policy)              [position_simulator]
+    3. generate signals via SignalService               [strategies]
+    4. news gate via NewsService.events_as_of(now)      [news]
+    5. RiskEngine.evaluate_signal(params, account, now=ts) [risk_management]
+    6. open position (pending -> fill at next bar)
+  -> EquityPoint[] , ClosedTrade[] , BacktestEvent[]
+  -> PerformanceAnalyzer / WalkForward / Optimization / Stress
+  -> reporting.py (JSON/CSV) , persistence.py (save/load)
+```
+
+### Design
+
+- **Look-ahead prevention**: indicators and strategies see only candles with
+  `ts <= now`; entries fill the **next** bar; news uses `events_as_of(now)`.
+- **Simulated time**: risk checks run at `ts` via `evaluate_signal(now=...)`
+  (not wall-clock), so staleness and daily-loss resets reflect the bar clock.
+- **Deterministic**: seeded/synthetic demo; no network access.
+- **Conservative defaults**: ambiguous SL/TP resolved stop-first
+  (`AmbiguousFillPolicy.CONSERVATIVE`) and flagged.
+- **Decimal arithmetic** throughout; no floating-point drift.
+
+### Safety boundaries (Phase 8)
+
+- Never places, modifies or closes real/demo orders; no `order_send` /
+  `order_check` calls. No broker connection.
+- Results are hypothetical and not predictive of future performance.
+- Simulated vs. real data provenance preserved (`DataSource.SIMULATED`).
+- `live_locked` remains active; backtest execution is internal to the simulator.
+
+### Inter-module dependencies
+
+- `src/backtesting/*` — depends on `src/indicators/*`, `src/strategies/*`,
+  `src/risk_management/*`, `src/news/*`, `src/market_data/models.py`.
+- Execution/simulator modules never import order-placement APIs.
+
+## Extending to later phases (paper trading / monitoring / live)
+
+1. Consume `BacktestResult` from `BacktestEngine.run()` for paper/demo replay
+   (Phase 9), or `RiskDecision` from `RiskEngine.evaluate_signal()` (optionally
+   with a Phase 7 `NewsRiskContext`) for live routing.
 2. Only act on `RISK_APPROVED` (still hypothetical — confirmation required).
 3. Route through `TradeExecutionEngine` with `live_locked` gate.
-4. Keep risk, news, and execution in separate modules; execution imports risk,
-   not vice versa.
+4. Keep risk, news, backtesting, and execution in separate modules; execution
+   imports risk, not vice versa.

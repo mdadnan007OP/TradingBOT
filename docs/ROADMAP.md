@@ -4,8 +4,9 @@ Phase 1 (complete): foundation. Phase 2 (complete): Market Data Engine.
 Phase 3 (complete): read-only MT5 integration (PU Prime demo connectivity).
 Phase 4 (complete): Technical Indicator Engine. Phase 5 (complete): Strategy
 Engine. Phase 6 (complete): Advanced Risk Management Engine. Phase 7 (complete):
-News & Economic Calendar Engine.
-Subsequent phases build toward a production-ready MT5/PuPrime bot.
+News & Economic Calendar Engine. Phase 8 (complete): Historical Backtesting &
+Strategy Validation Engine. Subsequent phases build toward a production-ready
+MT5/PuPrime bot.
 Dates are targets only.
 
 ## Phase 1 — Foundation (DONE)
@@ -190,11 +191,43 @@ Dates are targets only.
 - Total: 499 tests passing (13 Phase 1 + 68 Phase 2 + 41 Phase 3 + 75 Phase 4 +
   138 Phase 5 + 85 Phase 6 + 79 Phase 7).
 
-## Phase 8 — Backtesting Engine
+## Phase 8 — Historical Backtesting & Strategy Validation Engine (DONE)
 
-- `BacktestingEngine.run(symbol, candles)` evaluating strategies on history.
-- Performance metrics: win rate, profit factor, drawdown, expectancy.
-- No profitability guarantees; backtest results are not predictive.
+- `src/backtesting/` package: a deterministic, event-driven simulator that reuses
+  Phase 1–7 components unchanged and **never** places real/demo orders (no
+  `order_send`/`order_check` calls).
+- `BacktestEngine`: per-bar lifecycle — fill pending orders → check exits →
+  generate signals via `SignalService` → news gate → `RiskEngine.evaluate_signal`
+  (at simulated time) → open position at the next bar. Look-ahead prevented:
+  indicators/strategies see only candles `ts <= now`; entries fill the next bar.
+- `MarketSimulator`/`EventScheduler`: strict chronological reveal of `Bar`/
+  `BarWindow`, never exposing future candles.
+- `BacktestDataLoader`: validates timestamps, OHLC integrity and duplicates;
+  preserves missing data (no fabricated fills); labels invalid/incomplete bars
+  as `DataSource.SIMULATED`.
+- Execution & cost realism: `SpreadModel`, `SlippageModel` (adverse only),
+  `CommissionModel` (none/per-lot/fixed), `SwapModel` (overnight), and
+  `CurrencyConversion` (as-of rates, never future). LONG fills at ask, SHORT at
+  bid; ambiguous SL/TP resolved by a conservative default (stop-first), flagged.
+- `OrderSimulator`, `PositionSimulator`, `PortfolioSimulator`: pending → filled →
+  open → closed lifecycle; gross/net PnL, R-multiple; hedging + simplified
+  netting; equity/balance tracking; rejected-signal and risk-lockout logs.
+- Performance analysis: `PerformanceAnalyzer`, `Metrics` (Sharpe/Sortino
+  annualized by the median bar interval; warns when < 30 trades),
+  `TradeAnalyzer`, `DrawdownAnalysis` (max/avg drawdown, recovery), and
+  `StrategyComparison` across strategy subsets.
+- Validation: `WalkForward` (in-sample / out-of-sample split), `Optimization`
+  (`grid_search` + `robustness_score`/`best_candidate`), and `Stress` (spread
+  2×/5×, adverse slippage, elevated commission).
+- Reporting & persistence: `reporting.py` (JSON/CSV reports, monthly
+  performance, formatted summary) and `persistence.py` (save/load results).
+- Backward-compatible risk integration: `AccountSnapshot.is_stale(reference_time)`,
+  `validate_account(reference_time)`, and `RiskEngine.evaluate_signal(now=...)`
+  let risk checks run at simulated time instead of wall-clock `datetime.now()`.
+- Deterministic synthetic demo: `python -m src.backtesting.demo` (SMA-crossover
+  `MomentumStrategy`) writes to the git-ignored `backtest_output/` directory.
+- Total: 593 tests passing (13 Phase 1 + 68 Phase 2 + 41 Phase 3 + 75 Phase 4 +
+  138 Phase 5 + 85 Phase 6 + 79 Phase 7 + 94 Phase 8).
 
 ## Phase 9 — Paper / Demo Trading Engine
 

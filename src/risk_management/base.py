@@ -176,10 +176,11 @@ class AccountSnapshot:
     timestamp: Optional[datetime] = None
     data_source: str = "mock"
 
-    def is_stale(self, max_age_seconds: int) -> bool:
+    def is_stale(self, max_age_seconds: int, reference_time: Optional[datetime] = None) -> bool:
         if self.timestamp is None:
             return True
-        age = (datetime.now(timezone.utc) - self.timestamp).total_seconds()
+        ref = reference_time or datetime.now(timezone.utc)
+        age = (ref - self.timestamp).total_seconds()
         return age > max_age_seconds
 
 
