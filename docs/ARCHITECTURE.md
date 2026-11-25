@@ -761,12 +761,107 @@ BacktestEngine.run():
   `src/risk_management/*`, `src/news/*`, `src/market_data/models.py`.
 - Execution/simulator modules never import order-placement APIs.
 
-## Extending to later phases (paper trading / monitoring / live)
+## Phase 9 — Advanced Demo Trading & Execution Engine
 
-1. Consume `BacktestResult` from `BacktestEngine.run()` for paper/demo replay
-   (Phase 9), or `RiskDecision` from `RiskEngine.evaluate_signal()` (optionally
-   with a Phase 7 `NewsRiskContext`) for live routing.
-2. Only act on `RISK_APPROVED` (still hypothetical — confirmation required).
-3. Route through `TradeExecutionEngine` with `live_locked` gate.
-4. Keep risk, news, backtesting, and execution in separate modules; execution
-   imports risk, not vice versa.
+### Overview
+
+Phase 9 is a **demo-only** execution system. It connects the Phase 5 strategy
+engine, Phase 6 risk engine and Phase 7 news engine to the PU Prime MT5 DEMO
+account. It supports three modes: **PAPER** (default, simulated, no broker
+calls), **DEMO_MANUAL** (individually approved demo market orders) and
+**DEMO_AUTO** (hard-disabled by default, requires env + CLI activation). REAL /
+CONTEST / LIVE execution is permanently rejected — no code path submits orders
+on a real or live account.
+
+The existing Phase 3 `MT5BrokerAdapter` remains **read-only** and untouched. A
+new, dedicated `DemoMT5ExecutionAdapter` is the **only** component permitted to
+call MT5 trading functions (`order_check`, `order_send`, `positions_get`,
+`orders_get`, `history_*`).
+
+### Module overview
+
+| Module | File | Responsibility |
+|--------|------|----------------|
+| Config | `src/execution/config.py` | `ExecutionConfig`, `ExecutionMode`; fail-closed mode gating; LIVE/REAL rejected |
+| Models | `src/execution/models.py` | `ExecutionRequest`, `ExecutionRecord`, `ExecutionResult`, `ExecutionState` (enum), `BrokerRetCode`, request fingerprint |
+| State machine | `src/execution/state_machine.py` | Explicit lifecycle transitions (CREATED → … → RECONCILED); PLACED ≠ FILLED |
+| Interfaces | `src/execution/interfaces.py` | `ExecutionGateway` ABC (isolates broker communication) |
+| Gateway | `src/execution/gateway.py` | Routes requests to the active adapter by mode |
+| Policy | `src/execution/execution_policy.py` | PAPER default; DEMO_MANUAL/DEMO_AUTO gating; LIVE rejected |
+| Pre-trade validator | `src/execution/pre_trade_validator.py` | Stage A: account, DEMO, mode, signal, risk, market, specs, volume/SL/TP, margin, `order_check()` |
+| Approval | `src/execution/approval.py` | Stage B: one-time, time-limited manual approval bound to order fingerprint |
+| Order builder | `src/execution/order_builder.py` | Builds + normalizes `OrderRequest` (price/volume precision, side-aware entry) |
+| Order manager | `src/execution/order_manager.py` | Submit/track/record; idempotency + journaling + state machine |
+| Position manager | `src/execution/position_manager.py` | Bot-ownership via magic number + journal; never manages non-bot positions |
+| Trade monitor | `src/execution/trade_monitor.py` | Read-only monitoring of positions/orders/deals/equity/margin |
+| Reconciliation | `src/execution/reconciliation.py` | Reconcile broker orders/positions/deals vs journal; UNKNOWN resolution |
+| Idempotency | `src/execution/idempotency.py` | Request fingerprinting; duplicate detection; restart-safe |
+| Journal | `src/execution/execution_journal.py` | Durable append-only audit log (Git-ignored runtime dir) |
+| Process lock | `src/execution/process_lock.py` | Single execution-owner lock; prevents concurrent bot instances |
+| Emergency stop | `src/execution/emergency_stop.py` | Persisted circuit breakers (global lock, daily limits, lockouts) |
+| Reporting | `src/execution/reporting.py` | Readable execution/status reports (no credentials) |
+| Service | `src/execution/service.py` | `ExecutionEngine` orchestrator wiring all layers |
+| Adapters | `src/execution/adapters/paper_adapter.py` | PAPER: simulated fills, `can_submit_orders() == False` |
+| Adapters | `src/execution/adapters/demo_mt5_adapter.py` | DEMO: ONLY component calling MT5 trading functions |
+
+### Operating modes
+
+| Mode | Default | Submits orders? | Activation |
+|------|---------|-----------------|------------|
+| PAPER | ✅ Yes | No (simulated) | None — always available |
+| DEMO_MANUAL | No | Yes | `DEMO_EXECUTION_ENABLED=true` + per-order user approval |
+| DEMO_AUTO | No (disabled) | Yes | `DEMO_AUTOMATIC_ENABLED=true` **AND** explicit CLI flag |
+| LIVE | Never | No | Rejected outright; mode does not exist |
+
+### Data flow (Phase 9)
+
+```
+Strategy signal (Phase 5)
+  -> Signal validation (expiry, duplicate, data source, freshness)
+  -> Risk gate (Phase 6): RISK_APPROVED mandatory, never overridden
+  -> Pre-trade validation (Stage A): account identity, DEMO, market/specs,
+     volume/SL/TP, margin, order_check() preflight, execution preview
+  -> Manual approval (Stage B, DEMO_MANUAL only): one-time, time-limited,
+     fingerprint-bound challenge; revalidate immediately before order_send()
+  -> Persist submission-intent to journal BEFORE broker call
+  -> order_check() (preflight) / order_send() via DemoMT5ExecutionAdapter only
+  -> Classify broker retcode (DONE, DONE_PARTIAL, PLACED, REJECT, TIMEOUT, UNKNOWN…)
+  -> Reconcile orders/positions/deals vs journal; UNKNOWN never blind-retried
+  -> Execution journal + reporting (no credentials logged)
+```
+
+### Safety boundaries (Phase 9)
+
+- PAPER mode is the default; `PaperExecutionAdapter.can_submit_orders()` is
+  `False`; it never reaches the demo trading gateway.
+- Only `DemoMT5ExecutionAdapter` may call MT5 trading functions; strategy,
+  indicator, news, risk and backtesting modules never access the order API.
+- REAL / CONTEST accounts rejected; LIVE mode does not exist.
+- DEMO account identity reverified before every order-related request:
+  `trade_mode == DEMO`, exact `MT5_ALLOWED_DEMO_SERVER` match (no partial
+  matching), `MT5_ALLOWED_BROKER_COMPANY` match, terminal connected, trade
+  permissions enabled.
+- `RISK_APPROVED` from Phase 6 is mandatory; never overridden; volume never
+  increased beyond approval; stop-loss never auto-widened.
+- Submission intent journaled **before** `order_send()`; timeouts → `UNKNOWN`;
+  never blindly retried; reconciliation required first.
+- Emergency stop blocks new entries; never auto-liquidates; lockouts persist
+  across restarts; reset requires explicit authorization.
+- No broker passwords or login identifiers stored or logged; `.env` git-ignored.
+
+### Inter-module dependencies
+
+- `src/execution/*` — depends on `src/strategies/*`, `src/risk_management/*`,
+  `src/news/*`, `src/market_data/models.py`, `src/broker/mt5/connection.py`.
+- Only `src/execution/adapters/demo_mt5_adapter.py` imports MT5 trading APIs.
+- `src/broker/mt5/mt5_adapter.py` remains read-only and is NOT used for order
+  submission.
+
+## Extending to later phases (monitoring / live)
+
+Phase 10+ builds on Phase 9:
+1. Consume `ExecutionResult` / `ExecutionRecord` for monitoring and reporting.
+2. Position management extensions (SL/TP updates, closing) require explicit
+   authorization and DEMO re-verification.
+3. Any path to REAL/LIVE trading remains rejected unless explicitly unlocked in
+   a later, separately-authorized phase with its own safety review.

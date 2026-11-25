@@ -5,7 +5,8 @@ Phase 3 (complete): read-only MT5 integration (PU Prime demo connectivity).
 Phase 4 (complete): Technical Indicator Engine. Phase 5 (complete): Strategy
 Engine. Phase 6 (complete): Advanced Risk Management Engine. Phase 7 (complete):
 News & Economic Calendar Engine. Phase 8 (complete): Historical Backtesting &
-Strategy Validation Engine. Subsequent phases build toward a production-ready
+Strategy Validation Engine. Phase 9 (complete): Advanced Demo Trading &
+Execution Engine. Subsequent phases build toward a production-ready
 MT5/PuPrime bot.
 Dates are targets only.
 
@@ -226,15 +227,52 @@ Dates are targets only.
   let risk checks run at simulated time instead of wall-clock `datetime.now()`.
 - Deterministic synthetic demo: `python -m src.backtesting.demo` (SMA-crossover
   `MomentumStrategy`) writes to the git-ignored `backtest_output/` directory.
-- Total: 593 tests passing (13 Phase 1 + 68 Phase 2 + 41 Phase 3 + 75 Phase 4 +
-  138 Phase 5 + 85 Phase 6 + 79 Phase 7 + 94 Phase 8).
+- Total: 658 tests passing (13 Phase 1 + 68 Phase 2 + 41 Phase 3 + 75 Phase 4 +
+  138 Phase 5 + 85 Phase 6 + 79 Phase 7 + 94 Phase 8 + 46 Phase 9).
 
-## Phase 9 — Paper / Demo Trading Engine
+## Phase 9 — Advanced Demo Trading & Execution Engine (DONE)
 
-- `PaperTradingEngine`: run strategies on live/demo data without real funds.
-- Paper order tracking, equity curve, simulated SL/TP hits.
+- `src/execution/` package: modular, demo-only execution system connecting the
+  Phase 5 strategy, Phase 6 risk and Phase 7 news engines to the PU Prime MT5
+  DEMO account. No REAL / CONTEST / LIVE execution path exists.
+- Three operating modes:
+  - **PAPER** (default): simulated execution only; no `order_send()` /
+    `order_check()`; `can_submit_orders()` is `False`.
+  - **DEMO_MANUAL**: individually approved demo market orders; one-time,
+    time-limited authorization bound to the exact order fingerprint.
+  - **DEMO_AUTO**: hard-disabled by default; requires env enablement AND an
+    explicit CLI activation flag.
+- `PaperExecutionAdapter` — simulated fills, never reaches a broker.
+- `DemoMT5ExecutionAdapter` — the **only** component permitted to call MT5
+  trading functions (`order_check`, `order_send`, `positions_get`, `orders_get`,
+  `history_*`); reverifies DEMO identity before every order-related request.
+- Strict demo-account identity protection: `trade_mode == DEMO` (REAL/CONTEST
+  rejected), exact `MT5_ALLOWED_DEMO_SERVER` match, `MT5_ALLOWED_BROKER_COMPANY`
+  match, terminal connected, trade permissions enabled, external Python API
+  permission, account-identity binding with change detection; no passwords/logins
+  stored or logged.
+- Mandatory Phase 6 risk gate: `RISK_APPROVED` required; never overridden;
+  volume never increased beyond approval; stop-loss never auto-widened.
+- Pre-trade validation (Stage A) and two-stage authorization (Stage B) with
+  manual approval challenge + revalidation before `order_send()`.
+- Execution state machine (CREATED → … → RECONCILED); non-null `order_send()`
+  result never treated as a fill; PLACED ≠ FILLED; partial fills handled;
+  `UNKNOWN` state for timeouts (no blind retry).
+- Durable execution journal + idempotency: submission-intent persisted before
+  `order_send()`; request fingerprinting prevents duplicates; restart-safe.
+- Process lock (single execution owner); emergency stop (global lock, daily
+  order/position/volume/risk limits, connection-loss / account-change /
+  risk-engine / news / stale-quote / reconciliation lockouts); all persisted and
+  survive restart; no auto-liquidation.
+- Read-only position monitoring with bot-ownership via magic number + execution
+  journal; never manages non-bot positions.
+- 46 mocked Phase 9 tests: PAPER never submits, DEMO_AUTO disabled, LIVE
+  rejected, REAL/CONTEST rejected, wrong server/company, risk rejections,
+  expired/duplicate signals, invalid stops/volume/margin, order_check /
+  order_send success/rejection/partial/unknown, duplicate prevention, restart
+  recovery, reconciliation, emergency controls.
 
-## Phase 10 — Monitoring & Reporting
+## Phase 10 — Monitoring & Reporting (PENDING)
 
 - `MonitoringEngine`: record trades, errors, performance, system status.
 - Logging, dashboards/reports, alerts.

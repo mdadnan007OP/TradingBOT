@@ -43,6 +43,22 @@ diagnostics script.
 - `LOG_LEVEL`: `DEBUG` | `INFO` | `WARNING` | `ERROR` | `CRITICAL`
 - `MT5_TERMINAL_PATH`: optional explicit path to the MT5 terminal executable
 
+### Phase 9 execution configuration (fail-closed)
+
+- `EXECUTION_MODE`: `PAPER` (default) | `DEMO_MANUAL` | `DEMO_AUTO`; `LIVE`/`REAL`
+  rejected.
+- `DEMO_EXECUTION_ENABLED`: must be `true` for any demo submission.
+- `DEMO_MANUAL_APPROVAL_REQUIRED`: `true` by default; per-order user approval.
+- `DEMO_AUTOMATIC_ENABLED`: `false` by default; DEMO_AUTO also needs a CLI flag.
+- `MT5_ALLOWED_DEMO_SERVER`: exact permitted demo server (no partial matching).
+- `MT5_ALLOWED_BROKER_COMPANY`: exact permitted broker company (where required).
+- `MT5_MAGIC_NUMBER`: unique configured MT5 magic number (> 0 for demo).
+- `MAX_DEMO_ORDERS_PER_DAY`, `MAX_DEMO_OPEN_POSITIONS`, `MAX_DEMO_ORDER_VOLUME`,
+  `MAX_DEMO_DAILY_RISK`: execution limits (0 = unset; validated when set).
+- `DEMO_APPROVAL_TTL_SECONDS`: manual approval time-to-live.
+- Missing critical values fail closed; `.env` is git-ignored; no passwords stored.
+
+
 ## 6. Centralized risk management
 
 - A single `RiskManager` interface governs position sizing, stop-loss,
@@ -209,7 +225,53 @@ demo orders. The following restrictions apply:
 - `ENABLE_LIVE_TRADING` remains `False`; `live_locked` stays active.
 - No live trading, no automatic account switching, no broker credentials stored.
 
-## 17. Escalation
+## 18. Phase 9 — Advanced Demo Trading & Execution Engine Safety
+
+Phase 9 introduces controlled **demo-only** order execution to the PU Prime MT5
+DEMO account. REAL / CONTEST / LIVE execution is permanently rejected.
+
+Mandatory restrictions:
+
+- **PAPER mode is the permanent default.** `PaperExecutionAdapter` simulates
+  fills and never calls `order_send()` / `order_check()`;
+  `can_submit_orders()` is `False`.
+- **Only `DemoMT5ExecutionAdapter` may call MT5 trading functions**
+  (`order_check`, `order_send`, `positions_get`, `orders_get`, `history_*`).
+  Strategy, indicator, news, risk and backtesting modules never access the
+  order API.
+- **REAL and CONTEST accounts are always rejected.** LIVE mode does not exist.
+- **Demo-account identity is reverified before every order-related request:**
+  `trade_mode == DEMO`, exact `MT5_ALLOWED_DEMO_SERVER` match (no partial
+  matching), `MT5_ALLOWED_BROKER_COMPANY` match (where configured), terminal
+  connected, terminal trade permissions enabled, external Python API trading
+  permission enabled when required.
+- **Account identity binding** detects changes to the connected demo account or
+  server; a changed account stops execution and requires explicit revalidation.
+  Never call `mt5.login()` automatically; never save broker passwords; never
+  switch accounts automatically.
+- **`RISK_APPROVED` from Phase 6 is mandatory** and is never overridden; volume
+  is never increased beyond the approved risk calculation; stop-loss is never
+  auto-widened.
+- **Two-stage authorization:** Stage A pre-trade validation (account, DEMO,
+  mode, signal, risk, market/specs, volume/SL/TP, margin, `order_check()`
+  preflight, execution preview); Stage B manual approval (DEMO_MANUAL) via a
+  one-time, time-limited challenge bound to the exact order fingerprint —
+  invalidated if any parameter changes — with revalidation immediately before
+  `order_send()`.
+- **DEMO_AUTO is hard-disabled by default** and requires both environment
+  enablement (`DEMO_AUTOMATIC_ENABLED=true`) and an explicit CLI activation
+  flag.
+- **Submission intent is journaled before `order_send()`.** Timeouts produce an
+  `UNKNOWN` state and are **never blindly retried**; broker reconciliation is
+  required first.
+- **Execution state machine** treats a non-null `order_send()` result as **not**
+  proof of a fill; `PLACED` ≠ `FILLED`; partial fills handled explicitly.
+- **Emergency stop** blocks new entries; never auto-liquidates positions; all
+  lockouts persist across restarts and require explicit authorization to reset.
+- **No broker passwords or login identifiers are stored or logged**; `.env` is
+  git-ignored; `live_locked` remains active.
+
+## 19. Escalation
 
 If any of these rules conflicts with a planned feature, pause implementation
 and review before proceeding.

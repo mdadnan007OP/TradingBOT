@@ -62,3 +62,9 @@ htmlcov/
 
 # Backtesting output
 backtest_output/
+
+# Phase 9 execution runtime artifacts (Git-ignored runtime directories)
+.execution_journal/
+.emergency_stop/
+.execution_lock/
+.test_*

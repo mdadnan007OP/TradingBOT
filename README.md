@@ -1,4 +1,4 @@
-# Forex Trading Bot — Phase 1, 2, 3, 4, 5, 6, 7 & 8
+# Forex Trading Bot — Phase 1, 2, 3, 4, 5, 6, 7, 8 & 9
 
 Professional, modular foundation for an automated Forex trading system intended
 to connect to MetaTrader 5 (MT5) and the PuPrime broker account. Phase 1
@@ -22,6 +22,15 @@ the Phase 1–7 components (indicators, strategies, risk, news) with realistic
 execution, transaction costs, performance analysis, and walk-forward /
 optimization / stress validation. **No real orders are placed and live trading is
 disabled.**
+
+Phase 9 adds an **Advanced Demo Trading & Execution Engine**: a modular,
+demo-only execution system connecting the Phase 5 strategy, Phase 6 risk and
+Phase 7 news engines to the PU Prime MT5 DEMO account. It supports **PAPER**
+mode (simulated, default — no broker calls), **DEMO_MANUAL** mode (individually
+approved demo market orders with one-time, time-limited authorization) and a
+separately gated **DEMO_AUTO** capability (hard-disabled by default). REAL /
+CONTEST / LIVE execution is **permanently rejected**; no code path submits
+orders on a real or live account.
 
 > **Disclaimer:** This software is for educational and development purposes. It
 > does not guarantee profits, and automated trading carries substantial risk of
@@ -120,6 +129,17 @@ forex-trading-bot/
 │       ├── service.py         # Service layer orchestrating providers
 │       ├── sessions.py        # Market session calendars
 │       └── demo.py            # Demonstration script
+│   ├── execution/          # Phase 9: Demo Trading & Execution Engine
+│   │   ├── __init__.py, models.py, config.py, service.py
+│   │   ├── interfaces.py, gateway.py, state_machine.py
+│   │   ├── execution_policy.py, pre_trade_validator.py, approval.py
+│   │   ├── order_builder.py, order_manager.py, position_manager.py
+│   │   ├── trade_monitor.py, reconciliation.py, idempotency.py
+│   │   ├── execution_journal.py, process_lock.py, emergency_stop.py, reporting.py
+│   │   └── adapters/         # PaperExecutionAdapter, DemoMT5ExecutionAdapter
+│   │       ├── __init__.py
+│   │       ├── paper_adapter.py      # PAPER mode: simulated, no broker calls
+│   │       └── demo_mt5_adapter.py   # DEMO mode: ONLY component calling MT5 trading API
 ├ tests/                    # Unit tests
 │   ├── test_foundation.py   # Phase 1 tests
 │   ├── market_data/
@@ -149,6 +169,12 @@ forex-trading-bot/
 │       ├── test_data_loader.py, test_performance.py
 │       ├── test_walk_forward.py, test_optimization.py, test_stress.py
 │       └── test_reporting.py
+│   └── execution/           # Phase 9 tests (mocked MT5, no real/demo orders)
+│       ├── test_config_policy.py
+│       ├── test_paper_adapter.py
+│       ├── test_account_identity.py
+│       ├── test_approval_idempotency_emergency.py
+│       └── test_engine_integration.py
 └ docs/
     ├── ARCHITECTURE.md     # Module communication & design
     ├── ROADMAP.md          # Phase-by-phase development plan
@@ -356,6 +382,28 @@ the diagnostics script.
   testing.
 - No fabricated real market data — simulated prices are explicitly labeled.
 
+### Phase 9 execution safety
+
+- PAPER mode is the permanent default and **never** calls `order_send()` or
+  `order_check()`; `PaperExecutionAdapter.can_submit_orders()` is `False`.
+- DEMO execution requires explicit configuration (`DEMO_EXECUTION_ENABLED=true`)
+  and a verified DEMO account; `DEMO_AUTO` additionally requires an explicit CLI
+  activation flag and remains disabled by default.
+- REAL / CONTEST / LIVE accounts and modes are **rejected**; no code path
+  submits orders on a real or live account.
+- Only `DemoMT5ExecutionAdapter` may call MT5 trading functions; strategy,
+  indicator, news, risk and backtesting modules never access the order API.
+- Account identity (demo mode, exact server/company match, terminal connected,
+  trade permissions) is reverified before every order-related request.
+- `RISK_APPROVED` from Phase 6 is mandatory and is never overridden; volume is
+  never increased beyond the approved risk calculation.
+- Submission intent is journaled **before** `order_send()`; timeouts produce an
+  `UNKNOWN` state and are never blindly retried.
+- Emergency stop blocks new entries and never auto-liquidates positions;
+  lockouts persist across restarts and require explicit authorization to reset.
+- No broker passwords or login identifiers are stored or logged; `.env` is
+  git-ignored.
+
 See `docs/RISK_AND_SAFETY.md` for the full safety policy.
 
 ## What is implemented
@@ -546,13 +594,35 @@ See `docs/RISK_AND_SAFETY.md` for the full safety policy.
   let risk checks run at simulated time instead of wall-clock `datetime.now()`.
 - Deterministic synthetic demo: `python -m src.backtesting.demo` (SMA-crossover
   `MomentumStrategy`) writes to the git-ignored `backtest_output/` directory.
-- Total: 593 tests passing (13 + 68 + 41 + 75 + 138 + 85 + 79 + 94 Phase 8).
+- Total: 658 tests passing (13 + 68 + 41 + 75 + 138 + 85 + 79 + 94 + 46 Phase 9).
+
+### Phase 9 — Advanced Demo Trading & Execution Engine (DONE)
+
+- `src/execution/` package: a modular, demo-only execution system connecting the
+  Phase 5 strategy, Phase 6 risk and Phase 7 news engines to the PU Prime MT5
+  DEMO account. No REAL / CONTEST / LIVE execution path exists.
+- Three operating modes:
+  - **PAPER** (default): simulated execution only; no `order_send()` / `order_check()`; maintains paper account state; generates paper reports.
+  - **DEMO_MANUAL**: individually approved demo market orders; one-time, time-limited authorization bound to the exact order fingerprint; invalidated if any parameter changes.
+  - **DEMO_AUTO**: hard-disabled by default; requires both env enablement and an explicit CLI activation flag.
+- `PaperExecutionAdapter` — simulated fills, never reaches a broker; `can_submit_orders()` is `False`.
+- `DemoMT5ExecutionAdapter` — the **only** component permitted to call MT5 trading functions (`order_check`, `order_send`, `positions_get`, `orders_get`, `history_*`); reverifies DEMO identity before every order-related request.
+- Strict demo-account identity protection: trade_mode == DEMO (REAL/CONTEST rejected), exact server match (`MT5_ALLOWED_DEMO_SERVER`), company match (`MT5_ALLOWED_BROKER_COMPANY`), terminal connected, trade permissions enabled, external Python API permission, account-identity binding with change detection; no passwords/logins stored or logged.
+- Mandatory Phase 6 risk gate: `RISK_APPROVED` required; never overridden; volume never increased beyond approval; stop-loss never auto-widened.
+- Pre-trade validation (Stage A): account identity, DEMO mode, execution mode, signal validation, risk approval, market/quote freshness, instrument specs, volume/SL/TP, exposure/drawdown, margin, `order_check()` preflight, execution preview.
+- Two-stage authorization (Stage B): manual approval challenge with expiry; revalidation immediately before `order_send()`.
+- Execution state machine: CREATED → ... → RECONCILED; a non-null `order_send()` result is never treated as a fill; PLACED ≠ FILLED; partial fills handled; UNKNOWN state for timeouts (no blind retry).
+- Durable execution journal + idempotency: submission-intent persisted **before** `order_send()`; request fingerprinting prevents duplicates; restart-safe (no auto-replay).
+- Process lock (single execution owner), emergency stop (global lock, daily order/position/volume/risk limits, connection-loss/account-change/risk-engine/news/stale-quote/reconciliation lockouts), all persisted and surviving restart; no auto-liquidation.
+- Read-only position monitoring with bot-ownership via magic number + execution journal; never manages non-bot positions.
+- Comprehensive mocked tests (46 Phase 9 tests): PAPER never submits, DEMO_AUTO disabled, LIVE rejected, REAL/CONTEST rejected, wrong server/company, risk rejections, expired/duplicate signals, invalid stops/volume/margin, order_check/order_send success/rejection/partial/unknown, duplicate prevention, restart recovery, reconciliation, emergency controls.
+- Total: 658 tests passing (13 + 68 + 41 + 75 + 138 + 85 + 79 + 94 + 46 Phase 9).
 
 ## What remains
 
-See `docs/ROADMAP.md`. Phases 1–8 are complete; subsequent phases cover
-paper/demo trading (9), monitoring/reporting (10), and live trading (11, only
-after extensive demo/paper validation).
+See `docs/ROADMAP.md`. Phases 1–9 are complete; subsequent phases cover
+monitoring/reporting (10), and live trading (11, only after extensive
+demo/paper validation and separate authorization).
 
 
 ## Known limitations (Phase 3)
