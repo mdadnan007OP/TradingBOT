@@ -17,7 +17,6 @@ from src.execution.execution_journal import ExecutionJournal
 from src.execution.execution_policy import ExecutionPolicy
 from src.execution.idempotency import IdempotencyManager
 from src.execution.adapters import PaperExecutionAdapter, DemoMT5ExecutionAdapter
-from src.config import CONFIG
 from src.broker import BrokerAdapter, TradeResultModel
 from src.engines import TradeExecutionEngine
 from src.models import Order, OrderRequest, Position, TradeResult
@@ -241,3 +240,12 @@ class TradeExecutionEngineImpl(TradeExecutionEngine):
                 error_code=-1,
                 error_message=f"Unexpected broker error: {exc}",
             )
+
+
+def __getattr__(name: str):
+    """Lazily load CONFIG from src.config to avoid circular imports."""
+    if name == "CONFIG":
+        from src.config import CONFIG as _cfg
+
+        return _cfg
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")

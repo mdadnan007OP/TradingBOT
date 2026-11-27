@@ -6,8 +6,8 @@ Phase 4 (complete): Technical Indicator Engine. Phase 5 (complete): Strategy
 Engine. Phase 6 (complete): Advanced Risk Management Engine. Phase 7 (complete):
 News & Economic Calendar Engine. Phase 8 (complete): Historical Backtesting &
 Strategy Validation Engine. Phase 9 (complete): Advanced Demo Trading &
-Execution Engine. Subsequent phases build toward a production-ready
-MT5/PuPrime bot.
+Execution Engine. Phase 10 (complete): Monitoring, Reliability and Deployment.
+Subsequent phases build toward a production-ready MT5/PuPrime bot.
 Dates are targets only.
 
 ## Phase 1 — Foundation (DONE)
@@ -272,11 +272,42 @@ Dates are targets only.
   order_send success/rejection/partial/unknown, duplicate prevention, restart
   recovery, reconciliation, emergency controls.
 
-## Phase 10 — Monitoring & Reporting (PENDING)
+## Phase 10 — Monitoring, Reliability and Deployment (DONE)
 
-- `MonitoringEngine`: record trades, errors, performance, system status.
-- Logging, dashboards/reports, alerts.
-- Performance reporting (equity curve, drawdown, trade log).
+- `src/monitoring/` package: centralized monitoring, alerting, reliability and
+  deployment preparation.
+- **Application Lifecycle Manager** — explicit states (INITIALIZING → STARTING →
+  RUNNING → DEGRADED → STOPPING → STOPPED → FAILED → LOCKED); application does
+  not report RUNNING when critical dependencies are unavailable.
+- **Centralized Health Monitoring** — broker/MT5, market data, strategy engine,
+  risk engine, news engine, execution engine.
+- **Heartbeat and Watchdog** — detects freezes, disconnects, stalls, and service
+  unavailability; never automatically authorizes new trading.
+- **Safe Recovery** — execution journal reconciliation after crashes; bounded
+  reconnection with exponential backoff + jitter; never auto-resends uncertain
+  orders.
+- **Read-Only Monitoring Dashboard** — localhost-only HTTP dashboard, no order
+  submission controls.
+- **Alerts and Notifications** — email, Telegram, webhook, log providers;
+  deduplication, rate limiting, no secrets in messages.
+- **Structured Logging and Audit Trails** — JSON audit events, sensitive-data
+  redaction, log rotation.
+- **Backup and Restore** — execution journal, risk config, logs; retention
+  policies; restore requires explicit confirmation.
+- **Windows Deployment** — PowerShell scripts; Windows VPS and AWS EC2 Windows
+  guides; MT5 desktop terminal required.
+- **CI/CD** — GitHub Actions workflow; no broker credentials or MT5 terminal in CI.
+- Total: 707 tests passing (13 Phase 1 + 68 Phase 2 + 41 Phase 3 + 75 Phase 4 +
+  138 Phase 5 + 85 Phase 6 + 79 Phase 7 + 94 Phase 8 + 46 Phase 9 + 49 Phase 10).
+
+## Phase 11 — Live Trading (PENDING, permanently unavailable unless explicitly unlocked)
+
+- Live trading remains permanently disabled in this phase.
+- `ENABLE_LIVE_TRADING` remains `false`; `live_locked` stays active.
+- Any future live trading would require a separate, explicitly authorized phase
+  with its own safety review, extensive demo/paper validation, and operator
+  approval.
+- Never promise win rate or guaranteed profitability.
 
 ## Phase 11 — Live Trading (only after Phases 1–10 validated on demo)
 

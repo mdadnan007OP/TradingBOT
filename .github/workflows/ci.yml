@@ -1,0 +1,138 @@
+name: CI — Forex Trading Bot
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+
+env:
+  PYTHON_VERSION: "3.13"
+  EXECUTION_MODE: PAPER
+  DEMO_EXECUTION_ENABLED: "false"
+  DEMO_AUTOMATIC_ENABLED: "false"
+  ENABLE_LIVE_TRADING: "false"
+  TRADING_MODE: simulation
+
+jobs:
+  test:
+    name: Run test suite
+    runs-on: windows-latest
+    timeout-minutes: 30
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install pytest pytest-mock
+          pip install -e .[dev]
+
+      - name: Run full test suite
+        run: |
+          python -m pytest tests/ -v --tb=short
+
+      - name: Upload test results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: pytest-results
+          path: |
+            .pytest_cache/
+            logs/
+
+  lint:
+    name: Lint and format check
+    runs-on: windows-latest
+    timeout-minutes: 15
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+
+      - name: Install lint dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install ruff
+
+      - name: Run ruff check
+        run: |
+          ruff check src/ tests/
+
+      - name: Run ruff format check
+        run: |
+          ruff format --check src/ tests/
+
+  security:
+    name: Security scan
+    runs-on: windows-latest
+    timeout-minutes: 15
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+
+      - name: Install safety
+        run: |
+          python -m pip install --upgrade pip
+          pip install safety
+
+      - name: Check for secrets in committed files
+        run: |
+          # Fail if any .env or secrets files are tracked
+          if (git ls-files | Select-String -Pattern "\.env$|secrets\.json|credentials\.json|id_rsa|id_ed25519") {
+            Write-Host "ERROR: Secret files found in repository."
+            exit 1
+          }
+          Write-Host "No secret files tracked in repository."
+
+      - name: Verify .env is git-ignored
+        run: |
+          if ((Get-Content .gitignore) -contains ".env") {
+            Write-Host ".env is properly git-ignored."
+          } else {
+            Write-Host "ERROR: .env is not git-ignored."
+            exit 1
+          }
+
+  build:
+    name: Build verification
+    runs-on: windows-latest
+    timeout-minutes: 15
+    needs: [test, lint, security]
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+
+      - name: Install build dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install build
+
+      - name: Verify package builds
+        run: |
+          python -m build --sdist --wheel .
+          Write-Host "Package build succeeded."

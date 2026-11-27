@@ -125,6 +125,13 @@ class RiskConfig:
     max_positions: int = 5
 
 
+def _default_monitoring_config() -> MonitoringConfig:
+    """Lazy default factory for MonitoringConfig (avoids circular import)."""
+    from src.monitoring.config import MonitoringConfig
+
+    return MonitoringConfig()
+
+
 @dataclass(frozen=True)
 class AppConfig:
     """Top-level application configuration, composed of domain sub-configs."""
@@ -132,11 +139,15 @@ class AppConfig:
     trading: TradingConfig
     logging: LoggingConfig
     risk: RiskConfig
+    monitoring: MonitoringConfig = field(default_factory=_default_monitoring_config)
 
     @classmethod
     def from_env(cls) -> "AppConfig":
         """Build configuration from environment variables (and optional ``.env``)."""
         load_env_file()
+        # Lazy import to avoid circular imports (config -> monitoring -> execution -> broker -> config).
+        from src.monitoring.config import MonitoringConfig
+
         return cls(
             trading=TradingConfig(
                 mode=os.environ.get("TRADING_MODE", "simulation"),
@@ -155,6 +166,7 @@ class AppConfig:
                 max_daily_loss=get_float("MAX_DAILY_LOSS", 0.05),
                 max_positions=get_int("MAX_POSITIONS", 5),
             ),
+            monitoring=MonitoringConfig.from_env(),
         )
 
 

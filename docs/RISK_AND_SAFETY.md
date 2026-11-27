@@ -271,7 +271,36 @@ Mandatory restrictions:
 - **No broker passwords or login identifiers are stored or logged**; `.env` is
   git-ignored; `live_locked` remains active.
 
-## 19. Escalation
+## 20. Phase 10 — Monitoring, Reliability and Deployment Safety
+
+Phase 10 adds operational reliability, monitoring, and deployment preparation.
+All safety rules from Phases 1–9 continue to apply.
+
+Mandatory restrictions:
+
+- **PAPER mode is the permanent default for deployment.**
+  `EXECUTION_MODE=PAPER`, `DEMO_EXECUTION_ENABLED=false`,
+  `DEMO_AUTOMATIC_ENABLED=false`.
+- **LIVE mode is unavailable.** `ENABLE_LIVE_TRADING` remains `false`.
+- **Deployment is not authorization to trade.** A successful deployment does
+  not permit any order submission.
+- **DEMO execution remains disabled on deployment** until separately authorized.
+- **Monitoring dashboard is read-only and localhost-only** (`127.0.0.1`).
+  No order submission controls; no sensitive account identifiers displayed.
+- **Alerts never contain secrets.** Credentials come from environment variables
+  only; notification messages are redacted.
+- **Recovery never removes persistent emergency stops or risk lockouts.**
+  Lockouts survive application restarts.
+- **Never automatically resend an uncertain order.** UNKNOWN execution states
+  are preserved until manually reconciled.
+- **Backup files never contain secrets.** `.env`, credentials, and keys are
+  excluded from all backups.
+- **Windows VPS deployment requires MT5 desktop terminal under the same user
+  context.** MT5 Virtual Hosting cannot host this separate Python process.
+- **CI pipeline never requires broker credentials, MT5 terminal, or real
+  account connections.** All CI tests are safe and deterministic.
+
+## 21. Escalation
 
 If any of these rules conflicts with a planned feature, pause implementation
 and review before proceeding.

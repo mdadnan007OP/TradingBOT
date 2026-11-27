@@ -11,7 +11,6 @@ import logging
 from typing import List, Optional
 
 from src.broker import BrokerAdapter, TradeResultModel
-from src.config import CONFIG
 from src.engines import TradeExecutionEngine
 from src.models import Order, OrderRequest, Position, TradeResult
 
@@ -39,7 +38,9 @@ class TradeExecutionEngineImpl(TradeExecutionEngine):
     def execute(self, request: OrderRequest) -> TradeResultModel:
         # Safety gate: live trading must be explicitly unlocked before any order
         # is routed to a broker capable of live execution.
-        if CONFIG.trading.live_locked:
+        from src.config import CONFIG as _cfg
+
+        if _cfg.trading.live_locked:
             return TradeResultModel(
                 success=False,
                 result=TradeResult.REJECTED,
@@ -82,7 +83,9 @@ class TradeExecutionEngineImpl(TradeExecutionEngine):
         return result
 
     def close_position(self, ticket: str) -> TradeResultModel:
-        if CONFIG.trading.live_locked:
+        from src.config import CONFIG as _cfg
+
+        if _cfg.trading.live_locked:
             return TradeResultModel(
                 success=False,
                 result=TradeResult.REJECTED,

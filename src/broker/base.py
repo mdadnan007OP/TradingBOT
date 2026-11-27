@@ -13,7 +13,6 @@ from datetime import datetime
 from decimal import Decimal
 from typing import Dict, List, Optional
 
-from src.config import CONFIG
 from src.models import (
     AccountInfo,
     Candle,

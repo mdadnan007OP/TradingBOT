@@ -8,7 +8,6 @@ from decimal import Decimal
 from typing import Dict, List, Optional
 
 from src.broker import BrokerAdapter
-from src.config import CONFIG
 from src.models import (
     AccountInfo,
     Candle,

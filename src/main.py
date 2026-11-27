@@ -1,7 +1,7 @@
 """Application entry point.
 
-A simple, runnable starting point that wires the configuration, logging, mock
-broker adapter, and trade execution engine together, then prints a status
+Wires the configuration, logging, mock broker, and trade execution engine
+together through the Phase 10 ApplicationLifecycleManager, then prints a status
 summary. No real orders are placed and live trading remains disabled.
 
 Run from the project root:
@@ -21,6 +21,7 @@ from src.config import CONFIG
 from src.engines import TradeExecutionEngine
 from src.execution import TradeExecutionEngineImpl
 from src.logging_config import setup_logging
+from src.monitoring.lifecycle import ApplicationLifecycleManager, LifecycleState
 from src.models import OrderRequest, OrderSide, OrderType
 
 logger = logging.getLogger(__name__)
@@ -40,7 +41,17 @@ def build_demo_order_request(symbol: str) -> OrderRequest:
 def main(argv: List[str]) -> int:
     # Initialize logging first.
     setup_logging()
-    logger.info("Forex Trading Bot starting (Phase 1 foundation)")
+
+    # Create and start the application lifecycle manager.
+    lifecycle = ApplicationLifecycleManager()
+    lifecycle.update_component_health("logging", True, "Logging initialized")
+
+    started = lifecycle.start()
+    if not started:
+        logger.error("Application failed to start; state=%s", lifecycle.state.value)
+        return 1
+
+    logger.info("Forex Trading Bot started (state=%s)", lifecycle.state.value)
 
     # Report configuration (no secrets logged).
     logger.info("Trading mode: %s | Live locked: %s", CONFIG.trading.mode, CONFIG.trading.live_locked)
@@ -50,10 +61,12 @@ def main(argv: List[str]) -> int:
     broker = MockBrokerAdapter()
     connected = broker.connect()
     logger.info("Mock broker connected: %s", connected)
+    lifecycle.update_component_health("broker", connected, "Mock broker connected")
 
     # Wire the execution engine (risk manager not yet implemented in Phase 1).
     execution_engine: TradeExecutionEngine = TradeExecutionEngineImpl(broker=broker, risk_manager=None)
     logger.info("Trade execution engine ready")
+    lifecycle.update_component_health("execution_engine", True, "Execution engine ready")
 
     # Demonstrate a sample order request (NOT submitted).
     demo_request = build_demo_order_request(CONFIG.trading.default_symbols[0])
@@ -80,8 +93,13 @@ def main(argv: List[str]) -> int:
     instruments = broker.get_instruments()
     logger.info("Available instruments: %d", len(instruments))
 
+    # Health summary.
+    health = lifecycle.get_health_summary()
+    logger.info("Health summary: %s", health)
+
     broker.disconnect()
-    logger.info("Forex Trading Bot stopped")
+    lifecycle.stop()
+    logger.info("Forex Trading Bot stopped (state=%s)", lifecycle.state.value)
     return 0
 
 

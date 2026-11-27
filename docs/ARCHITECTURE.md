@@ -857,11 +857,86 @@ Strategy signal (Phase 5)
 - `src/broker/mt5/mt5_adapter.py` remains read-only and is NOT used for order
   submission.
 
-## Extending to later phases (monitoring / live)
+## Phase 10 — Monitoring, Reliability and Deployment
 
-Phase 10+ builds on Phase 9:
-1. Consume `ExecutionResult` / `ExecutionRecord` for monitoring and reporting.
-2. Position management extensions (SL/TP updates, closing) require explicit
-   authorization and DEMO re-verification.
-3. Any path to REAL/LIVE trading remains rejected unless explicitly unlocked in
-   a later, separately-authorized phase with its own safety review.
+### Overview
+
+Phase 10 adds operational reliability, monitoring, security, and deployment
+preparation. It does not enable live trading. PAPER mode remains the default.
+DEMO execution remains explicitly controlled and disabled on deployment until
+separately authorized.
+
+### Module overview
+
+| Module | File | Responsibility |
+|--------|------|----------------|
+| Config | `src/monitoring/config.py` | `MonitoringConfig`, `DashboardConfig`, `AlertConfig`, `WatchdogConfig`, `BackupConfig`; fail-closed mode gating |
+| Lifecycle | `src/monitoring/lifecycle.py` | `ApplicationLifecycleManager`, `LifecycleState` enum; startup/shutdown orchestration |
+| Health | `src/monitoring/health.py` | `HealthService`, subsystem health checkers (broker, market data, strategy, risk, news, execution) |
+| Heartbeat | `src/monitoring/heartbeat.py` | `HeartbeatRegistry`, `Watchdog`, `HeartbeatReporter`; freeze/disconnect/stall detection |
+| Recovery | `src/monitoring/recovery.py` | `SafeRecoveryManager`, `ReconnectionManager`; journal reconciliation, bounded reconnection |
+| Dashboard | `src/monitoring/dashboard.py` | `DashboardServer`, `DashboardHandler`; read-only localhost-only HTTP dashboard |
+| Alerts | `src/monitoring/alerts.py` | `AlertManager`, `AlertSeverity`, notification providers (log, email, Telegram, webhook) |
+| Logging | `src/monitoring/logging_audit.py` | `StructuredLogger`, `AuditEvent`; structured JSON logging, sensitive-data redaction |
+| Persistence | `src/monitoring/persistence.py` | `BackupManager`; backup/restore, integrity checks, retention policies |
+
+### Operating modes (deployment safety)
+
+| Setting | Default | Purpose |
+|---------|---------|---------|
+| `EXECUTION_MODE` | `PAPER` | `PAPER` \| `DEMO_MANUAL` \| `DEMO_AUTO`; `LIVE`/`REAL` rejected |
+| `DEMO_EXECUTION_ENABLED` | `false` | Must be explicitly `true` for demo submission |
+| `DEMO_AUTOMATIC_ENABLED` | `false` | Must be explicitly `true` for DEMO_AUTO |
+| `DEMO_MANUAL_APPROVAL_REQUIRED` | `true` | Per-order user approval for DEMO_MANUAL |
+
+### Dashboard
+
+- Read-only HTTP dashboard using Python `http.server` (stdlib)
+- Default binding: `127.0.0.1:8765` (localhost only)
+- No order submission controls; no sensitive account identifiers
+- Endpoints: `/api/health`, `/api/status`, `/api/execution`
+
+### Watchdog Safety
+
+- Configurable timeouts for heartbeat, market data staleness, MT5 disconnect
+- Detects: freeze, unresponsive worker, stalled market data, MT5 disconnection,
+  strategy failure, risk service unavailability, news provider failure,
+  execution backlog, reconciliation failure
+- **Never automatically authorizes new trading**
+- No alerts for scheduled market closures; weekends/holidays not failures
+
+### Recovery Safety
+
+- Bounded MT5 reconnection with exponential backoff + jitter
+- Execution journal reconciliation after crashes/timeouts
+- **Never auto-resends uncertain orders**; UNKNOWN states preserved
+- Persistent lockouts survive restarts; reset requires explicit authorization
+
+### Windows Deployment
+
+- PowerShell scripts in `scripts/`: `start.ps1`, `stop.ps1`,
+  `health_check.ps1`, `restart.ps1`, `backup.ps1`, `restore.ps1`
+- Requires Python runtime + MetaTrader 5 desktop terminal (same user context)
+- MT5 Virtual Hosting does NOT support this separate Python process
+- Windows VPS is the recommended deployment architecture
+
+### CI/CD
+
+- GitHub Actions workflow (`.github/workflows/ci.yml`)
+- Tests, lint, security scan, build verification
+- CI never requires broker credentials, MT5 terminal, or real account
+  connections
+
+### Inter-module dependencies
+
+- `src/monitoring/*` — depends on `src/config.py`, `src/execution/*`,
+  `src/logging_config.py`
+- Only `src/execution/adapters/demo_mt5_adapter.py` imports MT5 trading APIs
+- `src/broker/mt5/mt5_adapter.py` remains read-only
+
+## Extending to later phases (live trading)
+
+Phase 11+ would cover live trading. Live trading remains permanently disabled
+in this phase. Any future live trading would require a separate, explicitly
+authorized phase with its own safety review, extensive demo/paper validation,
+and operator approval. Never promise win rate or guaranteed profitability.

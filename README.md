@@ -1,4 +1,4 @@
-# Forex Trading Bot — Phase 1, 2, 3, 4, 5, 6, 7, 8 & 9
+# Forex Trading Bot — Phase 1, 2, 3, 4, 5, 6, 7, 8, 9 & 10
 
 Professional, modular foundation for an automated Forex trading system intended
 to connect to MetaTrader 5 (MT5) and the PuPrime broker account. Phase 1
@@ -618,11 +618,47 @@ See `docs/RISK_AND_SAFETY.md` for the full safety policy.
 - Comprehensive mocked tests (46 Phase 9 tests): PAPER never submits, DEMO_AUTO disabled, LIVE rejected, REAL/CONTEST rejected, wrong server/company, risk rejections, expired/duplicate signals, invalid stops/volume/margin, order_check/order_send success/rejection/partial/unknown, duplicate prevention, restart recovery, reconciliation, emergency controls.
 - Total: 658 tests passing (13 + 68 + 41 + 75 + 138 + 85 + 79 + 94 + 46 Phase 9).
 
+### Phase 10 — Monitoring, Reliability and Deployment (DONE)
+
+- `src/monitoring/` package: centralized monitoring, alerting, reliability and
+  deployment preparation.
+- **Application Lifecycle Manager** — explicit states (INITIALIZING → STARTING →
+  RUNNING → DEGRADED → STOPPING → STOPPED → FAILED → LOCKED); application does
+  not report RUNNING when critical dependencies are unavailable; startup never
+  silently switches execution modes.
+- **Centralized Health Monitoring** — broker/MT5, market data, strategy engine,
+  risk engine, news engine, execution engine; never exposes passwords or
+  sensitive account identifiers.
+- **Heartbeat and Watchdog** — detects freezes, disconnects, stalls, and service
+  unavailability with configurable timeouts; never automatically authorizes new
+  trading; no alerts for scheduled market closures.
+- **Safe Recovery** — execution journal reconciliation after crashes/timeouts;
+  bounded reconnection with exponential backoff + jitter; never auto-resends
+  uncertain orders; preserves UNKNOWN states; persistent lockouts never removed.
+- **Read-Only Monitoring Dashboard** — localhost-only HTTP dashboard
+  (`127.0.0.1:8765`), no order submission controls, no sensitive data exposed.
+- **Alerts and Notifications** — email, Telegram, webhook, and log providers;
+  alert deduplication, rate limiting, delivery status; no secrets in messages.
+- **Structured Logging and Audit Trails** — JSON audit events with correlation
+  IDs, event IDs, sensitive-data redaction, log rotation, separate error logs.
+- **Backup and Restore** — execution journal, risk config, strategy config,
+  logs; never includes passwords/private keys; retention policies; restore
+  requires explicit confirmation.
+- **Windows Deployment** — PowerShell scripts (`start.ps1`, `stop.ps1`,
+  `health_check.ps1`, `restart.ps1`, `backup.ps1`, `restore.ps1`); Windows VPS
+  and AWS EC2 Windows guides; MT5 desktop terminal required (not virtual hosting).
+- **CI/CD** — GitHub Actions workflow with tests, lint, security scan, build
+  verification; no broker credentials or MT5 terminal required in CI.
+- Default deployment: `EXECUTION_MODE=PAPER`, `DEMO_EXECUTION_ENABLED=false`,
+  `DEMO_AUTOMATIC_ENABLED=false`.
+- Total: 707 tests passing (13 + 68 + 41 + 75 + 138 + 85 + 79 + 94 + 46 Phase 9 +
+  49 Phase 10).
+
 ## What remains
 
-See `docs/ROADMAP.md`. Phases 1–9 are complete; subsequent phases cover
-monitoring/reporting (10), and live trading (11, only after extensive
-demo/paper validation and separate authorization).
+See `docs/ROADMAP.md`. Phases 1–10 are complete; live trading (11) remains
+permanently unavailable unless explicitly unlocked in a later, separately
+authorized phase with its own safety review.
 
 
 ## Known limitations (Phase 3)
